@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and loyalty rewards data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "stamps": { "type": "number", "description": "Current number of loyalty stamps (0-10)" },
+        "rewardsUnlocked": { "type": "array", "items": { "type": "string" }, "description": "Unlocked milestones: ['free_cap', 'free_haircut']" },
+        "role": { "type": "string", "enum": ["client", "barber", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "stamps", "role"]
+    },
+    "Booking": {
+      "title": "Barber Booking",
+      "description": "Scheduled or Queue session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "barberId": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "scheduledAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "checked-in", "in-progress", "completed", "expired", "missed"] },
+        "type": { "type": "string", "enum": ["scheduled", "queue"] },
+        "verificationCode": { "type": "string", "description": "6-digit OTP for check-in" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "serviceId", "status", "type", "verificationCode"]
+    },
+    "QueueEntry": {
+      "title": "Live Queue Slot",
+      "description": "A dynamic slot in the live daily queue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "position": { "type": "number" },
+        "estimatedWaitMinutes": { "type": "number" },
+        "status": { "type": "string", "enum": ["waiting", "next", "serving"] }
+      },
+      "required": ["bookingId", "position", "status"]
+    },
+    "Barber": {
+      "title": "Barber Profile",
+      "description": "Professional profile for a barber",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "isAvailable": { "type": "boolean" },
+        "specialties": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "Individual user profiles" },
+    "/bookings/{bookingId}": { "schema": "Booking", "description": "All scheduled and queue bookings" },
+    "/queue/{queueId}": { "schema": "QueueEntry", "description": "Current live queue state" },
+    "/barbers/{barberId}": { "schema": "Barber", "description": "Barber details and availability" }
+  }
+}
