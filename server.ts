@@ -88,6 +88,46 @@ app.post("/api/bookings/verify", async (req, res) => {
   }
 });
 
+// --- AUTH OTP SYSTEM (Sign Code Authentication) ---
+
+const otpStore = new Map<string, { code: string; expires: number }>();
+
+app.post("/api/auth/request-otp", async (req, res) => {
+  const { email } = req.body;
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  otpStore.set(email, { code, expires: Date.now() + 10 * 60000 }); // 10 mins
+  
+  console.log(`[AUTH] Sent code ${code} to ${email}`);
+  // In production: sendMail({ to: email, subject: "Your Access Code", text: `Your code is ${code}` });
+  
+  res.json({ success: true });
+});
+
+app.post("/api/auth/verify-otp", async (req, res) => {
+  const { email, otp } = req.body;
+  const stored = otpStore.get(email);
+
+  if (stored && stored.code === otp && stored.expires > Date.now()) {
+    otpStore.delete(email);
+    
+    // Create Firebase Custom Token
+    try {
+      const userRecord = await admin.auth().getUserByEmail(email).catch(async () => {
+        return await admin.auth().createUser({ email });
+      });
+      const customToken = await admin.auth().createCustomToken(userRecord.uid, {
+        email: email,
+        email_verified: true
+      });
+      res.json({ success: true, customToken });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  } else {
+    res.status(401).json({ error: "Invalid or expired code" });
+  }
+});
+
 // Endpoint to trigger manual notification (Barber Action)
 app.post("/api/notify/:userId", async (req, res) => {
   const { userId } = req.params;
@@ -154,33 +194,61 @@ if (db) {
   db.collection("bookings").onSnapshot((snapshot) => {
     snapshot.docChanges().forEach(async (change) => {
       const data = change.doc.data();
+      const docId = change.doc.id;
+
+      // New Booking Trigger
+      if (change.type === "added" && data.status === "confirmed") {
+        io.emit("notification:admin", { 
+          title: "New Booking", 
+          message: `${data.userName} joined ${data.type === 'queue' ? 'the queue' : 'a scheduled slot'}.` 
+        });
+      }
       
-      if (change.type === "modified" && data.status === "completed") {
-        const userRef = db!.collection("users").doc(data.userId);
-        const userDoc = await userRef.get();
-        if (userDoc.exists) {
-          const userData = userDoc.data()!;
-          let currentStamps = (userData.stamps || 0) + 1;
-          const rewards = userData.rewardsUnlocked || [];
-          
-          if (currentStamps === 5 && !rewards.includes("free_cap")) {
-            rewards.push("free_cap");
-          }
-          
-          if (currentStamps >= 10) {
-            if (!rewards.includes("free_haircut")) rewards.push("free_haircut");
-            // If they just hit 10, we could lock or reset. Let's reset for the next loop.
-            // currentStamps = 0; // Reset after 10 for the "10 slots" loop
-          }
-
-          await userRef.update({
-            stamps: currentStamps,
-            rewardsUnlocked: rewards,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      // Status Change Triggers
+      if (change.type === "modified") {
+        if (data.status === "checked-in") {
+          io.emit("notification:admin", { 
+            title: "Client Arrived", 
+            message: `${data.userName} is now checked-in and ready.` 
           });
+        }
 
-          console.log(`Automation: Updated rewards for user ${data.userId}. Stamps: ${currentStamps}`);
-          io.emit("notification:reward", { userId: data.userId, stamps: currentStamps, rewards });
+        if (data.status === "started") {
+          io.emit("notification:direct", { 
+            userId: data.userId, 
+            message: "Your session has officially started. Sit back and enjoy!" 
+          });
+        }
+
+        if (data.status === "completed") {
+          const userRef = db!.collection("users").doc(data.userId);
+          const userDoc = await userRef.get();
+          if (userDoc.exists) {
+            const userData = userDoc.data()!;
+            let currentStamps = (userData.stamps || 0) + 1;
+            const rewards = userData.rewardsUnlocked || [];
+            
+            if (currentStamps === 5 && !rewards.includes("free_cap")) {
+              rewards.push("free_cap");
+            }
+            
+            if (currentStamps >= 10) {
+              if (!rewards.includes("free_haircut")) rewards.push("free_haircut");
+            }
+
+            await userRef.update({
+              stamps: currentStamps,
+              rewardsUnlocked: rewards,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            console.log(`Automation: Updated rewards for user ${data.userId}. Stamps: ${currentStamps}`);
+            io.emit("notification:reward", { userId: data.userId, stamps: currentStamps, rewards });
+            io.emit("notification:direct", { 
+              userId: data.userId, 
+              message: `Session complete! You now have ${currentStamps} stamps. Keep it up!` 
+            });
+          }
         }
       }
     });

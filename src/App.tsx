@@ -92,6 +92,46 @@ const useAuth = () => {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  enum OperationType {
+    CREATE = 'create',
+    UPDATE = 'update',
+    DELETE = 'delete',
+    LIST = 'list',
+    GET = 'get',
+    WRITE = 'write',
+  }
+
+  interface FirestoreErrorInfo {
+    error: string;
+    operationType: OperationType;
+    path: string | null;
+    authInfo: {
+      userId?: string | null;
+      email?: string | null;
+      emailVerified?: boolean | null;
+    }
+  }
+
+  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    const errInfo: FirestoreErrorInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    // throw new Error(JSON.stringify(errInfo)); // Silent in console but logged
+  };
+
+  const [authStep, setAuthStep] = useState<'methods' | 'email' | 'otp'>('methods');
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [isSendingCode, setIsSendingCode] = useState(false);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -103,20 +143,20 @@ const useAuth = () => {
           if (!userDoc.exists()) {
             const newProfile = {
               uid: firebaseUser.uid,
-              displayName: firebaseUser.displayName,
-              email: firebaseUser.email,
+              displayName: firebaseUser.displayName || email.split('@')[0],
+              email: firebaseUser.email || email,
               phoneNumber: firebaseUser.phoneNumber,
               photoURL: firebaseUser.photoURL,
               stamps: 0,
               rewardsUnlocked: [],
-              role: (firebaseUser.email === 'cbrprints22@gmail.com' || (firebaseUser.email && firebaseUser.email.endsWith('@sizabantubarbershop.co.za'))) ? 'admin' : 'client',
+              role: ((firebaseUser.email || email) === 'cbrprints22@gmail.com' || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) ? 'admin' : 'client',
               createdAt: new Date().toISOString()
             };
             await setDoc(userRef, newProfile);
             setProfile(newProfile);
           } else {
             const existingProfile = userDoc.data();
-            if ((firebaseUser.email === 'cbrprints22@gmail.com' || (firebaseUser.email && firebaseUser.email.endsWith('@sizabantubarbershop.co.za'))) && existingProfile?.role !== 'admin') {
+            if (((firebaseUser.email || email) === 'cbrprints22@gmail.com' || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) && existingProfile?.role !== 'admin') {
               await updateDoc(userRef, { role: 'admin' });
               setProfile({ ...existingProfile, role: 'admin' });
             } else {
@@ -124,17 +164,9 @@ const useAuth = () => {
             }
             onSnapshot(userRef, (doc) => {
               if (doc.exists()) {
-                console.log("Profile sync success:", doc.id);
                 setProfile(doc.data());
               }
-            }, (err) => {
-              console.error("Profile sync error details:", {
-                code: err.code,
-                message: err.message,
-                uid: firebaseUser.uid,
-                authUid: auth.currentUser?.uid
-              });
-            });
+            }, (error) => handleFirestoreError(error, 'get' as any, `users/${firebaseUser.uid}`));
           }
         } catch (err) {
           console.error("Auth profile error:", err);
@@ -145,9 +177,52 @@ const useAuth = () => {
       setLoading(false);
     });
     return unsubscribe;
-  }, []);
+  }, [email]);
 
-  const login = async () => {
+  const requestOTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.includes('@')) return alert("Valid email required");
+    setIsSendingCode(true);
+    try {
+      const response = await fetch('/api/auth/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      if (response.ok) {
+        setAuthStep('otp');
+      } else {
+        alert("Failed to send code. Try again.");
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const verifyOTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp })
+      });
+      const data = await response.json();
+      if (response.ok && data.customToken) {
+        const { signInWithCustomToken } = await import('firebase/auth');
+        await signInWithCustomToken(auth, data.customToken);
+        setAuthStep('methods');
+      } else {
+        alert("Invalid or expired code.");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loginGoogle = async () => {
      try {
        // Using Popup, but handling common browser blocks
        await signInWithPopup(auth, googleProvider);
@@ -160,13 +235,31 @@ const useAuth = () => {
   };
   const logout = () => signOut(auth);
 
-  return { user, profile, loading, login, logout };
+  return { 
+    user, 
+    profile, 
+    loading, 
+    logout,
+    authStep, 
+    setAuthStep, 
+    email, 
+    setEmail, 
+    otp, 
+    setOtp, 
+    isSendingCode, 
+    requestOTP, 
+    verifyOTP, 
+    loginGoogle,
+    handleFirestoreError,
+    OperationType 
+  };
 };
 
 // --- Notifications ---
 
 const NotificationCenter = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
+  const { profile } = useAuth();
 
   useEffect(() => {
     socket.on('notification:reward', (data) => {
@@ -192,14 +285,30 @@ const NotificationCenter = () => {
     });
 
     socket.on('notification:direct', (data) => {
-      const newNotif = { 
-        id: Date.now(), 
-        type: 'direct', 
-        message: data.message,
-        icon: <Bell className="w-5 h-5 text-brand-red animate-bounce" />
-      };
-      setNotifications(prev => [newNotif, ...prev]);
-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 8000);
+      // Only show if it's for this user
+      if (profile && data.userId === profile.uid) {
+        const newNotif = { 
+          id: Date.now(), 
+          type: 'direct', 
+          message: data.message,
+          icon: <Bell className="w-5 h-5 text-brand-red animate-bounce" />
+        };
+        setNotifications(prev => [newNotif, ...prev]);
+        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 8000);
+      }
+    });
+
+    socket.on('notification:admin', (data) => {
+      if (profile?.role === 'admin') {
+        const newNotif = { 
+          id: Date.now(), 
+          type: 'admin', 
+          message: `${data.title}: ${data.message}`,
+          icon: <ShieldCheck className="w-5 h-5 text-brand-blue" />
+        };
+        setNotifications(prev => [newNotif, ...prev]);
+        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 8000);
+      }
     });
 
     return () => {
@@ -241,6 +350,7 @@ const AdminDashboard = () => {
   const [bookings, setBookings] = useState<any[]>([]);
   const [verifyCode, setVerifyCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const { handleFirestoreError } = useAuth();
 
   useEffect(() => {
     const q = query(
@@ -251,7 +361,7 @@ const AdminDashboard = () => {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
 
     return unsubscribe;
   }, []);
@@ -357,10 +467,25 @@ const AdminDashboard = () => {
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => sendPing(b.userId, "You're next! Please arrive at the shop.")} title="Ping Client" className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-blue hover:text-white transition-all"><Bell className="w-4 h-4" /></button>
-                  {b.status === 'checked-in' && <button onClick={() => updateStatus(b.id, 'in-progress')} className="p-3 bg-yellow-50 text-yellow-600 rounded-xl hover:bg-yellow-600 hover:text-white transition-all"><Scissors className="w-4 h-4" /></button>}
-                  {b.status === 'in-progress' && <button onClick={() => updateStatus(b.id, 'completed')} className="p-3 bg-slate-900 text-white rounded-xl hover:bg-brand-red transition-all"><Trophy className="w-4 h-4" /></button>}
-                  <button onClick={() => cancelBooking(b.id)} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
+                  <button onClick={() => sendPing(b.userId, "Please prepare, your session is coming up soon.")} title="Ping Client" className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-blue hover:text-white transition-all"><Bell className="w-4 h-4" /></button>
+                  {b.status === 'checked-in' && (
+                    <button onClick={() => updateStatus(b.id, 'started')} className="flex items-center gap-2 px-6 py-3 bg-brand-blue text-white rounded-xl font-black uppercase text-[10px] hover:bg-slate-900 transition-all">
+                      <Scissors className="w-4 h-4" />
+                      Start Cut
+                    </button>
+                  )}
+                  {b.status === 'started' && (
+                    <button onClick={() => updateStatus(b.id, 'completed')} className="flex items-center gap-2 px-6 py-3 bg-green-500 text-white rounded-xl font-black uppercase text-[10px] hover:bg-green-600 transition-all">
+                      <Trophy className="w-4 h-4" />
+                      Finish Session
+                    </button>
+                  )}
+                  {b.status === 'confirmed' && b.type === 'queue' && (
+                    <button onClick={() => updateStatus(b.id, 'checked-in')} className="px-6 py-3 bg-slate-100 text-slate-900 rounded-xl font-black uppercase text-[10px] hover:bg-slate-200 transition-all">
+                      Manual Check-in
+                    </button>
+                  )}
+                  <button onClick={() => updateStatus(b.id, 'missed')} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
                 </div>
               </div>
             </motion.div>
@@ -377,6 +502,11 @@ const AdminDashboard = () => {
 };
 
 const BookingSystem = ({ profile }: { profile: any }) => {
+  const { 
+    authStep, setAuthStep, email, setEmail, 
+    otp, setOtp, isSendingCode, requestOTP, 
+    verifyOTP, loginGoogle, handleFirestoreError 
+  } = useAuth();
   const [activeBooking, setActiveBooking] = useState<any>(null);
   const [queue, setQueue] = useState<any[]>([]);
   const [bookingFlow, setBookingFlow] = useState<'none' | 'queue' | 'scheduled'>('none');
@@ -410,7 +540,7 @@ const BookingSystem = ({ profile }: { profile: any }) => {
       } else {
         setActiveBooking(null);
       }
-    });
+    }, (error) => handleFirestoreError(error, 'get' as any, 'bookings'));
 
     const queueQuery = query(
       collection(db, 'bookings'),
@@ -421,7 +551,7 @@ const BookingSystem = ({ profile }: { profile: any }) => {
 
     const unsubscribeQueue = onSnapshot(queueQuery, (snapshot) => {
       setQueue(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
 
     return () => {
       unsubscribeBookings();
@@ -485,18 +615,121 @@ const BookingSystem = ({ profile }: { profile: any }) => {
   };
 
   if (!profile) return (
-    <section id="book" className="py-32 bg-slate-900 overflow-hidden relative">
-      <div className="max-w-7xl mx-auto px-6 text-center relative z-10">
-        <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-8 block">Member Exclusive</span>
-        <h2 className="text-5xl md:text-8xl font-black uppercase tracking-tighter text-white leading-[0.85] mb-12">
-          Secure <br /> <span className="text-brand-blue italic font-serif lowercase tracking-normal">Your Slot</span>
+    <section id="book" className="py-32 bg-slate-900 border-t border-white/5 overflow-hidden relative">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-brand-red/10 via-transparent to-transparent opacity-50"></div>
+      <div className="max-w-xl mx-auto px-6 text-center relative z-10">
+        <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-8 block">Step Into The Realm</span>
+        <h2 className="text-5xl md:text-7xl font-black uppercase tracking-tighter text-white leading-[0.85] mb-12">
+          Identity <br /> <span className="text-brand-blue italic font-serif lowercase tracking-normal">Verification</span>
         </h2>
-        <p className="text-white/40 text-sm md:text-lg mb-12 max-w-lg mx-auto leading-relaxed">
-          Login required for automated queueing, scheduled bookings, and loyalty rewards tracking.
-        </p>
-        <button onClick={() => signInWithPopup(auth, googleProvider)} className="bg-white text-slate-900 px-12 py-5 rounded-full font-black uppercase tracking-widest text-[10px] hover:bg-brand-red hover:text-white transition-all shadow-2xl shadow-white/5">
-          Login With Google
-        </button>
+        
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] shadow-2xl shadow-black/50">
+          <AnimatePresence mode="wait">
+            {authStep === 'methods' && (
+              <motion.div 
+                key="methods"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                <button 
+                  onClick={() => setAuthStep('email')}
+                  className="w-full bg-white text-slate-900 py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red hover:text-white transition-all transition-all flex items-center justify-center gap-3"
+                >
+                  <Mail className="w-4 h-4" />
+                  Continue with Email
+                </button>
+                <div className="flex items-center gap-4 py-4">
+                  <div className="h-px flex-1 bg-white/10"></div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/20">or alternative</span>
+                  <div className="h-px flex-1 bg-white/10"></div>
+                </div>
+                <button 
+                  onClick={loginGoogle}
+                  className="w-full bg-white/5 border border-white/10 text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-white/10 transition-all flex items-center justify-center gap-3"
+                >
+                  <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
+                  Google Workspace
+                </button>
+              </motion.div>
+            )}
+
+            {authStep === 'email' && (
+              <motion.form 
+                key="email"
+                onSubmit={requestOTP}
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-6"
+              >
+                <p className="text-white/40 text-xs font-bold font-serif italic mb-6">Enter your email. A 6-digit access code will be generated for your session.</p>
+                <input 
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@domain.com"
+                  required
+                  className="w-full bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-bold outline-none focus:border-brand-blue transition-all"
+                />
+                <button 
+                  type="submit"
+                  disabled={isSendingCode}
+                  className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-red-500/20"
+                >
+                  {isSendingCode ? 'Sending...' : 'Request Access Code'}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setAuthStep('methods')}
+                  className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white"
+                >
+                  Go Back
+                </button>
+              </motion.form>
+            )}
+
+            {authStep === 'otp' && (
+              <motion.form 
+                key="otp"
+                onSubmit={verifyOTP}
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-6"
+              >
+                <div className="flex flex-col items-center mb-6">
+                  <div className="w-16 h-16 bg-brand-blue/10 rounded-full flex items-center justify-center mb-4">
+                    <ShieldCheck className="w-8 h-8 text-brand-blue" />
+                  </div>
+                  <p className="text-white/40 text-xs font-bold font-serif italic">Access code sent to {email}</p>
+                </div>
+                <input 
+                  type="text"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000 000"
+                  required
+                  className="w-full bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-black text-4xl text-center tracking-[0.5em] outline-none focus:border-brand-blue transition-all"
+                />
+                <button 
+                  type="submit"
+                  className="w-full bg-brand-blue text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-blue-500/20"
+                >
+                  Verify & Enter
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setAuthStep('email')}
+                  className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white"
+                >
+                  Change Email
+                </button>
+              </motion.form>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </section>
   );
@@ -504,15 +737,80 @@ const BookingSystem = ({ profile }: { profile: any }) => {
   return (
     <section id="book" className="py-24 bg-slate-900 text-white overflow-hidden relative scroll-mt-20">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
+      
+      {/* Payment Bridge Overlay */}
+      <AnimatePresence>
+        {isProcessingPayment && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2000] bg-slate-900 flex items-center justify-center p-6"
+          >
+            <div className="max-w-md w-full bg-white rounded-[3rem] p-12 text-slate-900 text-center shadow-3xl">
+              <div className="flex justify-center mb-8">
+                <div className="w-16 h-16 bg-slate-50 flex items-center justify-center rounded-2xl animate-pulse">
+                  <ShieldCheck className="w-8 h-8 text-brand-blue" />
+                </div>
+              </div>
+              <h3 className="text-2xl font-black uppercase tracking-tight mb-4">Securing Session</h3>
+              <p className="text-slate-400 text-xs font-bold leading-relaxed mb-8">Handshaking with payment gateway. Do not refresh or close this window. Your slot is being held.</p>
+              
+              <div className="space-y-4">
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  <span>Authorizing Card</span>
+                  <div className="w-2 h-2 bg-brand-blue rounded-full animate-ping"></div>
+                </div>
+                <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }} 
+                    animate={{ width: "100%" }} 
+                    transition={{ duration: 2 }}
+                    className="h-full bg-brand-blue"
+                  ></motion.div>
+                </div>
+              </div>
+              <p className="mt-8 text-[8px] font-black uppercase tracking-[0.4em] text-slate-200">Sizabantu Barbershop • Secure Link</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
       <div className="max-w-7xl mx-auto px-6 relative z-10">
-        <div className="grid lg:grid-cols-2 gap-16 items-start">
-          <div className="sticky top-32">
-            <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-6 block">Dedicated Session</span>
-            <h2 className="text-5xl md:text-8xl font-black uppercase tracking-tighter leading-[0.85] mb-12">
-              The <br /> <span className="text-brand-blue italic font-serif lowercase tracking-normal">Live Queue</span>
-            </h2>
-            
-            {activeBooking ? (
+          {/* Main Action Buttons (Front UX) */}
+          {bookingFlow === 'none' && !activeBooking && (
+            <div className="flex flex-col md:flex-row gap-6 mb-16">
+              <motion.button 
+                onClick={() => setBookingFlow('queue')} 
+                whileHover={{ y: -5 }}
+                className="flex-1 bg-brand-red text-white p-12 rounded-[3.5rem] shadow-2xl shadow-red-500/30 text-left relative overflow-hidden group"
+              >
+                <div className="relative z-10">
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] mb-4 block opacity-60">Instant Entry</span>
+                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-2">Live <br/> Queue</h3>
+                  <p className="text-white/60 text-xs font-bold font-serif italic">Walk-ins handled by system automation.</p>
+                </div>
+                <Users className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 group-hover:scale-110 transition-transform" />
+              </motion.button>
+
+              <motion.button 
+                onClick={() => setBookingFlow('scheduled')} 
+                whileHover={{ y: -5 }}
+                className="flex-1 bg-white/5 border border-white/10 p-12 rounded-[3.5rem] text-left relative overflow-hidden group"
+              >
+                <div className="relative z-10">
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] mb-4 block opacity-60">Future Slot</span>
+                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-2">Book <br/> Ahead</h3>
+                  <p className="text-white/40 text-xs font-bold font-serif italic">Pick your time, secure your day.</p>
+                </div>
+                <Calendar className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 group-hover:scale-110 transition-transform" />
+              </motion.button>
+            </div>
+          )}
+
+          <div className="grid lg:grid-cols-2 gap-16 items-start">
+            <div className="className">
+              {activeBooking ? (
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/10 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] relative overflow-hidden group shadow-2xl shadow-black/50">
                 <div className="absolute top-0 right-0 p-10">
                   <QrCode className="w-16 h-16 text-brand-red opacity-60" />
@@ -545,36 +843,54 @@ const BookingSystem = ({ profile }: { profile: any }) => {
                 </div>
                 <button onClick={() => updateDoc(doc(db, 'bookings', activeBooking.id), { status: 'missed' })} className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-brand-red transition-all underline underline-offset-8">Cancel My Spot</button>
               </motion.div>
-            ) : bookingFlow === 'none' ? (
-              <div className="space-y-10">
-                <p className="text-xl text-white/60 leading-relaxed max-w-sm italic font-serif">
-                  Our system operates on a zero-admin model. Secure your spot, verify your code at arrival, and earn rewards automatically.
-                </p>
-                <div className="flex flex-wrap gap-6">
-                  <motion.button onClick={() => setBookingFlow('queue')} whileHover={{ scale: 1.05 }} className="bg-brand-red text-white p-8 rounded-3xl flex items-center gap-8 group shadow-3xl shadow-red-500/20 w-full sm:w-auto">
-                    <div className="text-left">
-                      <span className="text-[10px] font-black uppercase tracking-[0.3em] mb-1 block opacity-60">Join Now</span>
-                      <span className="text-2xl font-black uppercase tracking-tight">Live Queue</span>
-                    </div>
-                    <Users className="w-10 h-10 group-hover:translate-x-2 transition-transform" />
-                  </motion.button>
-                  <motion.button onClick={() => setBookingFlow('scheduled')} whileHover={{ scale: 1.05 }} className="bg-white/10 backdrop-blur-md text-white p-8 rounded-3xl flex items-center gap-8 group border border-white/10 w-full sm:w-auto">
-                    <div className="text-left">
-                      <span className="text-[10px] font-black uppercase tracking-[0.3em] mb-1 block opacity-60">Pick Slot</span>
-                      <span className="text-2xl font-black uppercase tracking-tight">Scheduled</span>
-                    </div>
-                    <Calendar className="w-10 h-10 text-brand-blue group-hover:scale-110 transition-transform" />
-                  </motion.button>
+            ) : bookingFlow === 'queue' ? (
+              <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg text-center">
+                <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
+                  <ChevronRight className="w-4 h-4 rotate-180" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
+                </button>
+                <div className="w-20 h-20 bg-brand-red/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Zap className="w-10 h-10 text-brand-red" />
                 </div>
-              </div>
-            ) : (
+                <h3 className="text-3xl font-black uppercase tracking-tight">Rapid <span className="text-brand-red">Queue</span> Entry</h3>
+                <p className="text-white/40 text-xs italic font-serif">Instant walk-in. Pay now to lock your current position #{(queue.length + 1)} in line.</p>
+                
+                <div className="space-y-4 text-left">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Select Service</p>
+                  <div className="grid grid-cols-1 gap-3">
+                    {services.map(s => (
+                      <button 
+                        key={s.id} 
+                        onClick={() => setSelectedService(s.id)}
+                        className={`p-6 rounded-2xl border text-left transition-all flex justify-between items-center ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
+                      >
+                        <div>
+                          <p className="font-black text-sm uppercase tracking-tight">{s.name}</p>
+                          <p className="text-[8px] opacity-60">{s.time} process</p>
+                        </div>
+                        <span className="text-lg font-black italic">R{s.price}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 mt-8">
+                   <button 
+                    disabled={!selectedService || isProcessingPayment}
+                    onClick={() => createBooking('queue')}
+                    className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl flex items-center justify-center gap-3 active:scale-[0.98]"
+                  >
+                    {isProcessingPayment ? 'Connecting...' : 'Secure My Spot'}
+                  </button>
+                </div>
+              </motion.div>
+            ) : bookingFlow === 'scheduled' ? (
               <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg">
                 <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
                   <ChevronRight className="w-4 h-4 rotate-180" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Ggo Back</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
                 </button>
-                
-                <h3 className="text-3xl font-black uppercase tracking-tight">Select <span className="text-brand-red">{bookingFlow}</span> Setup</h3>
+                <h3 className="text-3xl font-black uppercase tracking-tight">Pick <span className="text-brand-blue">Scheduled</span> Time</h3>
                 
                 <div className="space-y-4">
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/40">1. Select Service</p>
@@ -635,7 +951,7 @@ const BookingSystem = ({ profile }: { profile: any }) => {
                   <p className="text-[8px] text-white/20 text-center mt-4 uppercase tracking-widest">Secured by Stripe & Google Cloud</p>
                 </div>
               </motion.div>
-            )}
+            ) : null}
           </div>
 
           <div className="relative">
@@ -731,11 +1047,67 @@ const BookingSystem = ({ profile }: { profile: any }) => {
   );
 };
 
-// --- Updated Components ---
+// --- Newsletter / Welcome Section ---
+
+const WelcomeJourney = () => {
+  const [email, setEmail] = useState('');
+  const [subscribed, setSubscribed] = useState(false);
+
+  return (
+    <section className="py-32 bg-white relative overflow-hidden">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="bg-slate-900 rounded-[4rem] p-12 md:p-24 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-16">
+          <div className="absolute top-0 right-0 w-1/2 h-full bg-[url('https://images.unsplash.com/photo-1503951914875-452162b0f3f1?q=80&w=2070&auto=format&fit=crop')] bg-cover opacity-20 hidden md:block"></div>
+          <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-transparent to-slate-900 z-10 hidden md:block"></div>
+          
+          <div className="relative z-20 max-w-xl">
+            <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-8 block">Exclusive Entry</span>
+            <h2 className="text-5xl md:text-7xl font-black uppercase tracking-tighter text-white leading-[0.85] mb-8">
+              Join The <br /> <span className="text-brand-blue italic font-serif lowercase tracking-normal">Inner Circle</span>
+            </h2>
+            <p className="text-white/40 text-sm md:text-lg mb-12 leading-relaxed font-serif italic">
+              New customers get an automated 20% discount code on their first session. Join our newsletter to receive grooming guides and priority slot alerts.
+            </p>
+
+            {subscribed ? (
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="p-8 bg-brand-red rounded-3xl text-white text-center">
+                <p className="font-black uppercase tracking-widest text-xs mb-2">Check Your Inbox!</p>
+                <p className="text-sm font-bold opacity-80 italic font-serif">Welcome to the Sizabantu family.</p>
+              </motion.div>
+            ) : (
+              <form onSubmit={(e) => { e.preventDefault(); setSubscribed(true); }} className="flex flex-col sm:flex-row gap-4">
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  required
+                  className="flex-1 bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-bold outline-none focus:border-brand-blue transition-all"
+                />
+                <button type="submit" className="bg-white text-slate-900 px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red hover:text-white transition-all shadow-2xl">
+                  Sign Me Up
+                </button>
+              </form>
+            )}
+          </div>
+
+          <div className="relative z-20 flex-shrink-0">
+             <div className="w-56 h-56 bg-brand-red rounded-[3rem] rotate-6 border-8 border-white/10 shadow-2xl overflow-hidden">
+                <img src="https://images.unsplash.com/photo-1599351431247-f579338421f0?q=80&w=2000&auto=format&fit=crop" className="w-full h-full object-cover grayscale" alt="Welcome" />
+             </div>
+             <div className="absolute -top-4 -left-4 w-24 h-24 bg-brand-blue rounded-3xl -rotate-12 border-4 border-slate-900 flex items-center justify-center p-4">
+                <Scissors className="w-10 h-10 text-white" />
+             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
 
 const TopNav = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const { user, profile, login, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   
   const navLinks = [
     { name: 'Book Session', href: '#book' },
@@ -743,6 +1115,11 @@ const TopNav = () => {
     { name: 'Gallery', href: '#portfolio' },
     { name: 'Reviews', href: '#reviews' },
   ];
+
+  const handleLoginClick = () => {
+    document.getElementById('book')?.scrollIntoView({ behavior: 'smooth' });
+    setIsOpen(false);
+  };
 
   return (
     <nav className="fixed top-0 left-0 w-full z-[100] bg-white/80 backdrop-blur-md py-4 border-b border-slate-100 transition-all duration-300">
@@ -772,16 +1149,20 @@ const TopNav = () => {
             </a>
           ))}
           
+          {profile?.role === 'admin' && (
+            <a href="#admin-hub" className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-blue animate-pulse">Admin Hub</a>
+          )}
+
           <div className="h-4 w-px bg-slate-200"></div>
 
-          {user ? (
+          {profile ? (
             <div className="flex items-center gap-6">
               <div className="flex flex-col items-end">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                  <span className="text-[10px] font-black uppercase tracking-tight text-slate-900">{user.displayName?.split(' ')[0]}</span>
+                  <span className="text-[10px] font-black uppercase tracking-tight text-slate-900">{profile.displayName?.split(' ')[0]}</span>
                 </div>
-                <span className="text-[7px] font-black uppercase tracking-[0.3em] text-brand-red">{profile?.stamps}/10 Stamps</span>
+                <span className="text-[7px] font-black uppercase tracking-[0.3em] text-brand-red">{profile.stamps || 0}/10 Stamps</span>
               </div>
               <button onClick={logout} className="p-3 bg-slate-50 text-slate-400 hover:text-brand-red hover:bg-brand-red/5 rounded-2xl transition-all">
                 <LogOut className="w-4 h-4" />
@@ -789,21 +1170,21 @@ const TopNav = () => {
             </div>
           ) : (
             <motion.button 
-              onClick={login}
+              onClick={handleLoginClick}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="bg-slate-900 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-200/50 transition-all flex items-center gap-2 group"
             >
               <User className="w-3 h-3 group-hover:rotate-12 transition-transform" />
-              Login
+              Member Login
             </motion.button>
           )}
         </div>
 
         {/* Mobile Header Elements */}
         <div className="flex md:hidden items-center gap-4">
-          {!user && (
-            <button onClick={login} className="p-2 text-slate-900">
+          {!profile && (
+            <button onClick={handleLoginClick} className="p-2 text-slate-900">
               <User className="w-5 h-5" />
             </button>
           )}
@@ -1553,9 +1934,14 @@ export default function App() {
         <Mission />
         
         {/* Conditional Admin Hub */}
-        {profile?.role === 'admin' && <AdminDashboard />}
+        {profile?.role === 'admin' && (
+          <div id="admin-hub" className="scroll-mt-32">
+            <AdminDashboard />
+          </div>
+        )}
         
         <BookingSystem profile={profile} />
+        <WelcomeJourney />
         <HaircutPricing />
         <Portfolio />
         <Reviews />
