@@ -61,12 +61,29 @@
         "isAvailable": { "type": "boolean" },
         "specialties": { "type": "array", "items": { "type": "string" } }
       }
+    },
+    "Settings": {
+      "title": "Google Workspace Settings",
+      "description": "Google Workspace sync tokens and configuration settings",
+      "type": "object",
+      "properties": {
+        "accessToken": { "type": "string" },
+        "calendarId": { "type": "string" },
+        "emailEnabled": { "type": "boolean" },
+        "smsEnabled": { "type": "boolean" },
+        "contactsEnabled": { "type": "boolean" },
+        "linkedBy": { "type": "string" },
+        "linkedAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "status": { "type": "string" }
+      }
     }
   },
   "firestore": {
     "/users/{userId}": { "schema": "User", "description": "Individual user profiles" },
     "/bookings/{bookingId}": { "schema": "Booking", "description": "All scheduled and queue bookings" },
     "/queue/{queueId}": { "schema": "QueueEntry", "description": "Current live queue state" },
-    "/barbers/{barberId}": { "schema": "Barber", "description": "Barber details and availability" }
+    "/barbers/{barberId}": { "schema": "Barber", "description": "Barber details and availability" },
+    "/settings/{settingsId}": { "schema": "Settings", "description": "Global and automated system settings" }
   }
 }

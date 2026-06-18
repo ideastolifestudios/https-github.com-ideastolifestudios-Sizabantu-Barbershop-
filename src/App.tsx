@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo, ReactNode, useRef } from 'react';
 import { 
   Phone, 
   MapPin, 
@@ -26,16 +26,27 @@ import {
   Scissors,
   CheckCircle2,
   AlertCircle,
-  QrCode,
-  ShieldCheck,
   Zap,
   Settings,
   Trash2,
   RefreshCcw,
   Bell,
-  CreditCard
+  Camera,
+  ShieldCheck,
+  History,
+  Heart,
+  QrCode,
+  Scan,
+  Printer,
+  Download,
+  HelpCircle,
+  ChevronDown,
+  Search,
+  Sparkles,
+  Filter
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { jsPDF } from 'jspdf';
+import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -43,6 +54,7 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
+  sendEmailVerification,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -67,7 +79,7 @@ import { io } from 'socket.io-client';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 const socket = io();
@@ -84,6 +96,47 @@ async function testConnection() {
   }
 }
 testConnection();
+
+// --- Constants ---
+
+const SERVICES = [
+  // Men
+  { id: 'fade', name: 'Fades', price: 50, desc: 'Precision blending & custom taper', time: '35m', category: 'Men' },
+  { id: 'men-cut-black-dye', name: 'Haircut & black dye', price: 75, desc: 'Sharp cut with full black dye coverage', time: '50m', category: 'Men' },
+  { id: 'men-taper-dye', name: 'Taper & dye', price: 110, desc: 'Classic taper with professional coloring', time: '55m', category: 'Men' },
+  { id: 'men-cut-bleach', name: 'Haircut & bleach', price: 150, desc: 'Modern cut paired with bold bleach toning', time: '60m', category: 'Men' },
+  { id: 'men-chiskop', name: 'CHiSkop', price: 30, desc: 'Sleek, clean-shaven bald head style', time: '15m', category: 'Men' },
+  { id: 'men-chiskop-shave', name: 'Chiskop & Shave', price: 45, desc: 'Bald head & pristine facial beard shave', time: '30m', category: 'Men' },
+  { id: 'men-shave', name: 'Shave', price: 15, desc: 'Quick clean facial outline or clean shave', time: '15m', category: 'Men' },
+
+  // Ladies Hair Styles
+  { id: 'ladies-cut-dry-curls', name: 'Haircut & dry curls', price: 250, desc: 'Stylish haircut with voluminous dry curls', time: '75m', category: 'Ladies' },
+  { id: 'ladies-dry-curl', name: 'Dry curl', price: 350, desc: 'Premium dry curl sculpting and hold treatment', time: '60m', category: 'Ladies' },
+  { id: 'ladies-relaxer-tong', name: 'Relaxer & tong', price: 350, desc: 'Relaxing treatment with polished tong curling', time: '90m', category: 'Ladies' },
+  { id: 'ladies-popcorn', name: 'Popcorn', price: 350, desc: 'Highly textured popcorn curls styling', time: '80m', category: 'Ladies' },
+  { id: 'ladies-dark-lovely', name: 'Dark n Lovely', price: 120, desc: 'Classic Dark & Lovely chemical relaxer treatment', time: '45m', category: 'Ladies' },
+  { id: 'ladies-dark-lovely-mix', name: 'Dark n Lovely mix', price: 180, desc: 'Dark & Lovely custom formula mix & conditioning', time: '60m', category: 'Ladies' },
+  { id: 'ladies-wash-style', name: 'Wash n Style', price: 150, desc: 'Relaxing hot wash with master blowout and style', time: '45m', category: 'Ladies' },
+  { id: 'ladies-restore', name: 'Restore', price: 140, desc: 'Intensive restorative scalp and hair treatment', time: '40m', category: 'Ladies' },
+  { id: 'ladies-soft-free', name: 'Soft n Free', price: 90, desc: 'Nourishing Soft & Free hair conditioning', time: '35m', category: 'Ladies' },
+  { id: 'ladies-treatment', name: 'Treatment', price: 70, desc: 'Scalp cooling and deep root moisture therapy', time: '30m', category: 'Ladies' },
+  { id: 'ladies-cut-s-curl', name: 'Cut n s curl', price: 150, desc: 'Short haircut styled with sleek S-curls', time: '60m', category: 'Ladies' },
+  { id: 'ladies-perm', name: 'Perm', price: 250, desc: 'Professional chemical perming and setting', time: '90m', category: 'Ladies' },
+  { id: 'ladies-wash', name: 'Wash', price: 50, desc: 'Deep scalp cleansing shampoo and rinse', time: '20m', category: 'Ladies' },
+  { id: 'ladies-blowout', name: 'Blowout', price: 90, desc: 'High-volume blowout hair stretching & prep', time: '30m', category: 'Ladies' },
+
+  // Kids Haircut
+  { id: 'kids-fade', name: 'Fade haircut', price: 50, desc: 'Sharp blended fade for stylish kiddies', time: '30m', category: 'Kiddies' },
+  { id: 'kids-cut-bleach', name: 'Cut n bleach', price: 120, desc: 'Haircut with kids-safe bleaching accents', time: '45m', category: 'Kiddies' },
+  { id: 'kids-cut-dye', name: 'Cut n dye', price: 75, desc: 'Trendy cut with rich color coloring dye', time: '45m', category: 'Kiddies' },
+  { id: 'kids-cut-color', name: 'Cut n color', price: 150, desc: 'Creative style cut with custom kids color coloring', time: '50m', category: 'Kiddies' },
+  { id: 'kids-relaxer', name: 'Relaxer kids', price: 100, desc: 'Gentle kids-formula hair relaxing treatment', time: '45m', category: 'Kiddies' },
+  { id: 'kids-pixie', name: 'Pixie kids', price: 100, desc: 'Sassy pixie crop styling for children', time: '40m', category: 'Kiddies' },
+  { id: 'kids-reset', name: 'Reset', price: 130, desc: 'Full hair reset, deep condition & styling reconstruction', time: '50m', category: 'Kiddies' },
+  { id: 'kids-blowout', name: 'Blowout', price: 70, desc: 'Gentle warm blowout drying and hair shaping', time: '25m', category: 'Kiddies' },
+  { id: 'kids-dark-lovely-mix', name: 'Dark n Lovely mix', price: 140, desc: 'Custom kids Dark & Lovely blend conditioning', time: '45m', category: 'Kiddies' },
+  { id: 'kids-dark-lovely', name: 'Dark n Lovely', price: 80, desc: 'Standard kids Dark & Lovely relaxer therapy', time: '35m', category: 'Kiddies' }
+];
 
 // --- Context / Hooks ---
 
@@ -129,8 +182,33 @@ const useAuth = () => {
 
   const [authStep, setAuthStep] = useState<'methods' | 'email' | 'otp'>('methods');
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
+
+  const validateEmail = (emailStr: string) => {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailStr) return "Email is required";
+    if (!re.test(emailStr)) return "Please enter a valid email address";
+    return "";
+  };
+
+  const validateOTP = (otpStr: string) => {
+    if (!otpStr) return "Access code is required";
+    if (otpStr.length !== 6) return "Code must be 6 digits";
+    return "";
+  };
+
+  useEffect(() => {
+    if (email) setEmailError(validateEmail(email));
+    else setEmailError('');
+  }, [email]);
+
+  useEffect(() => {
+    if (otp) setOtpError(validateOTP(otp));
+    else setOtpError('');
+  }, [otp]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -149,14 +227,14 @@ const useAuth = () => {
               photoURL: firebaseUser.photoURL,
               stamps: 0,
               rewardsUnlocked: [],
-              role: ((firebaseUser.email || email) === 'cbrprints22@gmail.com' || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) ? 'admin' : 'client',
+              role: (['cbrprints22@gmail.com', 'sizabantubarbershop@gmail.com'].includes(firebaseUser.email || email) || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) ? 'admin' : 'client',
               createdAt: new Date().toISOString()
             };
             await setDoc(userRef, newProfile);
             setProfile(newProfile);
           } else {
             const existingProfile = userDoc.data();
-            if (((firebaseUser.email || email) === 'cbrprints22@gmail.com' || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) && existingProfile?.role !== 'admin') {
+            if ((['cbrprints22@gmail.com', 'sizabantubarbershop@gmail.com'].includes(firebaseUser.email || email) || ((firebaseUser.email || email) && (firebaseUser.email || email).endsWith('@sizabantubarbershop.co.za'))) && existingProfile?.role !== 'admin') {
               await updateDoc(userRef, { role: 'admin' });
               setProfile({ ...existingProfile, role: 'admin' });
             } else {
@@ -181,7 +259,11 @@ const useAuth = () => {
 
   const requestOTP = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.includes('@')) return alert("Valid email required");
+    const error = validateEmail(email);
+    if (error) {
+      setEmailError(error);
+      return;
+    }
     setIsSendingCode(true);
     try {
       const response = await fetch('/api/auth/request-otp', {
@@ -203,6 +285,11 @@ const useAuth = () => {
 
   const verifyOTP = async (e: React.FormEvent) => {
     e.preventDefault();
+    const error = validateOTP(otp);
+    if (error) {
+      setOtpError(error);
+      return;
+    }
     try {
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
@@ -246,22 +333,155 @@ const useAuth = () => {
     setEmail, 
     otp, 
     setOtp, 
+    otpError,
     isSendingCode, 
     requestOTP, 
     verifyOTP, 
     loginGoogle,
     handleFirestoreError,
-    OperationType 
+    OperationType,
+    emailError
   };
 };
 
+// --- Custom Hook to Monitor Upcoming Appointments ---
+const useAppointmentReminders = (profile: any) => {
+  const [activeBookings, setActiveBookings] = useState<any[]>([]);
+
+  // 1. Sync User's Bookings in Real Time
+  useEffect(() => {
+    if (!profile) {
+      setActiveBookings([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'bookings'),
+      where('userId', '==', profile.uid),
+      where('status', 'in', ['pending', 'confirmed'])
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const bookingsList: any[] = [];
+      snapshot.forEach((doc) => {
+        bookingsList.push({ id: doc.id, ...doc.data() });
+      });
+      setActiveBookings(bookingsList);
+    }, (error) => {
+      console.error("Firestore reminders listener error: ", error);
+    });
+
+    return () => unsubscribe();
+  }, [profile]);
+
+  // 2. Request notification permission on login/mount
+  useEffect(() => {
+    if (profile && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [profile]);
+
+  // 3. Periodic check tick
+  useEffect(() => {
+    if (!profile || activeBookings.length === 0) return;
+
+    const checkWindow = () => {
+      const now = Date.now();
+      const localNotifiedStr = localStorage.getItem('notified_appointments_1h');
+      const notifiedMap = localNotifiedStr ? JSON.parse(localNotifiedStr) : {};
+      let changed = false;
+
+      activeBookings.forEach((booking) => {
+        if (booking.type !== 'scheduled') return;
+
+        const bookingId = booking.id;
+        
+        let scheduledTime: Date;
+        if (booking.scheduledAt?.toDate) {
+          scheduledTime = booking.scheduledAt.toDate();
+        } else {
+          scheduledTime = new Date(booking.scheduledAt);
+        }
+
+        const diffMs = scheduledTime.getTime() - now;
+        const diffMins = diffMs / (1000 * 60);
+
+        // We notify if the appointment is in the 1-hour window (between 0 and 60 minutes)
+        if (diffMins > 0 && diffMins <= 60) {
+          if (!notifiedMap[bookingId]) {
+            const timeStr = scheduledTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const messageStr = `Your appointment for ${booking.serviceName || 'Legacy Grooming'} is scheduled in 1 hour (at ${timeStr})!`;
+            
+            // A. Desktop Notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification("Appointment Reminder", {
+                  body: messageStr,
+                  icon: "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1777916389/WhatsApp_Image_2026-04-22_at_21.13.26_t3c8ji.jpg"
+                });
+              } catch (e) {
+                console.warn("Failed to show desktop notification: ", e);
+              }
+            }
+
+            // B. Toast Alert
+            triggerToast(messageStr, 'direct');
+
+            notifiedMap[bookingId] = true;
+            changed = true;
+          }
+        }
+      });
+
+      if (changed) {
+        localStorage.setItem('notified_appointments_1h', JSON.stringify(notifiedMap));
+      }
+    };
+
+    // Run check immediately on bookings load/update, then check every 10 seconds
+    checkWindow();
+    const timer = setInterval(checkWindow, 10000);
+
+    return () => clearInterval(timer);
+  }, [profile, activeBookings]);
+};
+
 // --- Notifications ---
+
+export const triggerToast = (message: string, type: 'reward' | 'queue' | 'direct' | 'admin' | 'info' = 'info') => {
+  const event = new CustomEvent('app-toast', { detail: { message, type } });
+  window.dispatchEvent(event);
+};
 
 const NotificationCenter = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const { profile } = useAuth();
 
   useEffect(() => {
+    const handleCustomToast = (e: Event) => {
+      const { message, type } = (e as CustomEvent).detail;
+      const getIcon = () => {
+        switch (type) {
+          case 'reward': return <Trophy className="w-5 h-5 text-yellow-500" />;
+          case 'queue': return <Users className="w-5 h-5 text-blue-500" />;
+          case 'admin': return <ShieldCheck className="w-5 h-5 text-brand-blue" />;
+          case 'direct': return <Bell className="w-5 h-5 text-brand-red animate-bounce" />;
+          default: return <Bell className="w-5 h-5 text-slate-500" />;
+        }
+      };
+      
+      const newNotif = {
+        id: Date.now(),
+        type,
+        message,
+        icon: getIcon()
+      };
+      setNotifications(prev => [newNotif, ...prev]);
+      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 6000);
+    };
+
+    window.addEventListener('app-toast', handleCustomToast);
+
     socket.on('notification:reward', (data) => {
       const newNotif = { 
         id: Date.now(), 
@@ -315,8 +535,9 @@ const NotificationCenter = () => {
       socket.off('notification:reward');
       socket.off('queue:updated');
       socket.off('notification:direct');
+      window.removeEventListener('app-toast', handleCustomToast);
     };
-  }, []);
+  }, [profile]);
 
   return (
     <div className="fixed top-24 right-6 z-[1000] flex flex-col gap-3 pointer-events-none">
@@ -345,12 +566,216 @@ const NotificationCenter = () => {
 
 // --- Automation System Components ---
 
+interface ErrorBoundaryProps {
+  children?: ReactNode;
+  fallback?: ReactNode;
+  name?: string;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  public static getDerivedStateFromError(_: Error): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error(`Uncaught error in ${this.props.name || 'Component'}:`, error, errorInfo);
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="p-12 text-center bg-slate-50/50 backdrop-blur-md rounded-[3rem] border-2 border-dashed border-slate-200/20">
+          <div className="w-16 h-16 bg-brand-red/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <AlertCircle className="w-8 h-8 text-brand-red" />
+          </div>
+          <h2 className="text-2xl font-black uppercase tracking-tight text-white mb-4">Something went wrong</h2>
+          <p className="text-white/40 mb-8 max-w-md mx-auto text-sm font-serif italic">We encountered an error loading this module. Our team has been notified. Please try refreshing.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="bg-brand-red text-white px-8 py-3 rounded-full font-black uppercase tracking-widest text-[9px] shadow-xl shadow-red-500/20"
+          >
+            Refresh Interface
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const AdminDashboard = () => {
-  const [activeTab, setActiveTab] = useState<'queue' | 'scheduled'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'scheduled' | 'checkin'>('queue');
   const [bookings, setBookings] = useState<any[]>([]);
-  const [verifyCode, setVerifyCode] = useState('');
-  const [isVerifying, setIsVerifying] = useState(false);
   const { handleFirestoreError } = useAuth();
+
+  // In-Person Check-In Desk States
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [scannedUserId, setScannedUserId] = useState('');
+  const [lookedUpUser, setLookedUpUser] = useState<any | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const [stampSuccessMsg, setStampSuccessMsg] = useState('');
+  const [simulatingScan, setSimulatingScan] = useState(false);
+
+  // Rescheduling States
+  const [reschedulingBookingId, setReschedulingBookingId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState<string>('');
+  const [rescheduleTime, setRescheduleTime] = useState<string>('');
+
+  // Receipt States
+  const [selectedReceiptBooking, setSelectedReceiptBooking] = useState<any | null>(null);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [bookingToComplete, setBookingToComplete] = useState<any | null>(null);
+
+  const handleDownloadPDF = (booking: any) => {
+    if (!booking) return;
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a6'
+      });
+
+      // Headers and metadata
+      doc.setTextColor(24, 28, 36);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('SIZABANTU BARBERSHOP', 10, 15);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text('ESTABLISHED IN 2022', 10, 20);
+      doc.text('PREMIUM GROOMING EXPERIENCE', 10, 24);
+      
+      // Divider line
+      doc.setLineWidth(0.25);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(10, 28, 95, 28);
+      
+      // Transaction Title
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('TRANSACTION RECEIPT', 10, 34);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(`Booking Ref: #${booking.id.toUpperCase().slice(0, 8)}`, 10, 40);
+      
+      let dateStr = 'N/A';
+      if (booking.scheduledAt) {
+        let d: Date;
+        if (typeof booking.scheduledAt.toDate === 'function') {
+          d = booking.scheduledAt.toDate();
+        } else if (booking.scheduledAt.seconds) {
+          d = new Date(booking.scheduledAt.seconds * 1000);
+        } else {
+          d = new Date(booking.scheduledAt);
+        }
+        dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+      } else if (booking.createdAt) {
+        let d: Date;
+        if (typeof booking.createdAt.toDate === 'function') {
+          d = booking.createdAt.toDate();
+        } else if (booking.createdAt.seconds) {
+          d = new Date(booking.createdAt.seconds * 1000);
+        } else {
+          d = new Date(booking.createdAt);
+        }
+        dateStr = d.toLocaleDateString() + ' (Walk-In)';
+      }
+      
+      doc.text(`Date of Service: ${dateStr}`, 10, 45);
+      doc.text(`Client Name: ${booking.userName || 'Valued Customer'}`, 10, 50);
+      
+      // Divider
+      doc.line(10, 55, 95, 55);
+      
+      // Table Header row
+      doc.setFont('helvetica', 'bold');
+      doc.text('SERVICE', 10, 61);
+      doc.text('QTY', 65, 61);
+      doc.text('PRICE', 80, 61);
+      
+      // Table Header line
+      doc.line(10, 64, 95, 64);
+      
+      // Table content row
+      doc.setFont('helvetica', 'normal');
+      const sName = booking.serviceName || 'Grooming Service';
+      const truncatedName = sName.length > 22 ? sName.substring(0, 19) + '...' : sName;
+      doc.text(truncatedName, 10, 70);
+      doc.text('1', 67, 70);
+      doc.text(`R${booking.totalPaid || 50}`, 80, 70);
+      
+      // Total divider line
+      doc.setLineWidth(0.5);
+      doc.line(10, 76, 95, 76);
+      
+      // Grand Total
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('Grand Total:', 10, 83);
+      doc.text(`R${booking.totalPaid || 50}`, 80, 83);
+      
+      // Barcode simulation lines
+      doc.setLineWidth(0.4);
+      for (let i = 0; i < 28; i++) {
+        const xPos = 12 + i * 2.5;
+        const stripeWidth = (i % 3 === 0) ? 0.8 : (i % 5 === 0 ? 1.2 : 0.4);
+        doc.setLineWidth(stripeWidth);
+        doc.line(xPos, 94, xPos, 110);
+      }
+      
+      // Footer block
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.text('Thank you for choosing Sizabantu Barbershop!', 52, 118, { align: 'center' });
+      doc.text('Crafted for perfection. Est. 2022', 52, 122, { align: 'center' });
+      
+      doc.save(`Sizabantu_Receipt_${booking.id.slice(0, 5).toUpperCase()}.pdf`);
+    } catch (e: any) {
+      alert("Error generating PDF: " + e.message);
+    }
+  };
+
+
+  // Workspace automation states
+  const [wsStatus, setWsStatus] = useState<any>({ linked: false, loading: true });
+  const [calIdInput, setCalIdInput] = useState('primary');
+  const [mailEnabled, setMailEnabled] = useState(true);
+  const [smsEnabled, setSmsEnabled] = useState(true);
+  const [contactsEnabled, setContactsEnabled] = useState(true);
+  const [onboardingEnabled, setOnboardingEnabled] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const fetchWorkspaceStatus = async () => {
+    try {
+      const res = await fetch('/api/workspace/status');
+      if (res.ok) {
+        const data = await res.json();
+        setWsStatus(data);
+        if (data.linked) {
+          setCalIdInput(data.calendarId || 'primary');
+          setMailEnabled(data.emailEnabled !== false);
+          setSmsEnabled(data.smsEnabled !== false);
+          setContactsEnabled(data.contactsEnabled !== false);
+          setOnboardingEnabled(data.onboardingEnabled !== false);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load workspace status:", e);
+    }
+  };
 
   useEffect(() => {
     const q = query(
@@ -363,33 +788,26 @@ const AdminDashboard = () => {
       setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
 
-    return unsubscribe;
+    const qUsers = query(
+      collection(db, 'users'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
+      setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => console.error("Error loading users for admin:", error));
+
+    fetchWorkspaceStatus();
+
+    return () => {
+      unsubscribe();
+      unsubscribeUsers();
+    };
   }, []);
 
   const updateStatus = async (id: string, status: string) => {
     await updateDoc(doc(db, 'bookings', id), { status, updatedAt: serverTimestamp() });
-  };
-
-  const handleVerify = async () => {
-    if (!verifyCode) return;
-    setIsVerifying(true);
-    try {
-      const response = await fetch('/api/bookings/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: verifyCode.toUpperCase() })
-      });
-      if (response.ok) {
-        setVerifyCode('');
-        alert("Check-in Successful!");
-      } else {
-        alert("Invalid or Expired Code");
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsVerifying(false);
-    }
   };
 
   const sendPing = async (userId: string, message: string) => {
@@ -404,143 +822,1246 @@ const AdminDashboard = () => {
     await deleteDoc(doc(db, 'bookings', id));
   };
 
+  const handleReschedule = async (booking: any, dateStr: string, timeStr: string) => {
+    if (!dateStr || !timeStr) {
+      alert("Please select both a date and a time.");
+      return;
+    }
+    
+    try {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      
+      const newDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+      const newTimestamp = Timestamp.fromDate(newDate);
+
+      // Update in Firestore
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        scheduledAt: newTimestamp,
+        updatedAt: serverTimestamp()
+      });
+
+      // Clear selecting state
+      setReschedulingBookingId(null);
+
+      // Formatted date string for user friendly email
+      const formattedDateTime = newDate.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      // Trigger notification email to client
+      await sendPing(
+        booking.userId,
+        `Your appointment for ${booking.serviceName} has been rescheduled to ${formattedDateTime}.`
+      );
+
+      alert(`Appointment rescheduled successfully to ${formattedDateTime}. Client has been notified.`);
+    } catch (err: any) {
+      console.error("Rescheduling error:", err);
+      alert("Failed to reschedule: " + err.message);
+    }
+  };
+
+  const handleLookupUser = async (idToLookup: string) => {
+    if (!idToLookup.trim()) {
+      setLookupError("Please enter or scan a User ID");
+      return;
+    }
+    setLookupError('');
+    setStampSuccessMsg('');
+    try {
+      const userRef = doc(db, 'users', idToLookup.trim());
+      const uDoc = await getDoc(userRef);
+      if (uDoc.exists()) {
+        setLookedUpUser({ id: uDoc.id, ...uDoc.data() });
+      } else {
+        setLookupError(`User ID "${idToLookup.trim()}" not found in database`);
+        setLookedUpUser(null);
+      }
+    } catch (err: any) {
+      setLookupError("Failed to lookup: " + err.message);
+      setLookedUpUser(null);
+    }
+  };
+
+  const handleAddStampByAdmin = async (userId: string, currentStamps: number) => {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const newStampCount = (currentStamps || 0) + 1;
+      
+      let updatedRewards = lookedUpUser?.rewardsUnlocked || [];
+      if (newStampCount === 5 && !updatedRewards.includes('cap')) {
+        updatedRewards.push('cap');
+      }
+      if (newStampCount === 10 && !updatedRewards.includes('haircut')) {
+        updatedRewards.push('haircut');
+      }
+
+      await updateDoc(userRef, { 
+        stamps: newStampCount,
+        rewardsUnlocked: updatedRewards
+      });
+
+      setLookedUpUser((prev: any) => prev ? { ...prev, stamps: newStampCount, rewardsUnlocked: updatedRewards } : null);
+      setStampSuccessMsg(`Stamps successfully added for client! Current: ${newStampCount}/10`);
+      setTimeout(() => setStampSuccessMsg(''), 4000);
+    } catch (err: any) {
+      alert("Failed to add stamp: " + err.message);
+    }
+  };
+
+  const handleResetStampsByAdmin = async (userId: string) => {
+    if (!confirm("Reset loyalty stamps? This is irreversible.")) return;
+    try {
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, { stamps: 0, rewardsUnlocked: [] });
+      setLookedUpUser((prev: any) => prev ? { ...prev, stamps: 0, rewardsUnlocked: [] } : null);
+      setStampSuccessMsg("Loyalty stamps reset to 0.");
+      setTimeout(() => setStampSuccessMsg(''), 4000);
+    } catch (err: any) {
+      alert("Failed to reset stamps: " + err.message);
+    }
+  };
+
+  const handleCheckInAndQueue = async (userObj: any) => {
+    try {
+      await addDoc(collection(db, 'bookings'), {
+        userId: userObj.id || userObj.uid,
+        userName: userObj.displayName,
+        userEmail: userObj.email,
+        serviceId: 'fade',
+        serviceName: 'In-Shop Entry Haircut',
+        type: 'queue',
+        status: 'checked-in',
+        totalPaid: 50,
+        createdAt: serverTimestamp()
+      });
+      alert(`Customer ${userObj.displayName} successfully added to the live queue!`);
+    } catch (err: any) {
+      alert("Failed to create check-in session: " + err.message);
+    }
+  };
+
+  const handleLinkWorkspace = async () => {
+    try {
+      const workspaceProvider = new GoogleAuthProvider();
+      workspaceProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+      workspaceProvider.addScope('https://www.googleapis.com/auth/calendar');
+      workspaceProvider.addScope('https://www.googleapis.com/auth/gmail.send');
+      workspaceProvider.addScope('https://www.googleapis.com/auth/contacts');
+
+      const result = await signInWithPopup(auth, workspaceProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        await setDoc(doc(db, 'settings', 'google_workspace'), {
+          accessToken: credential.accessToken,
+          calendarId: calIdInput || 'primary',
+          emailEnabled: mailEnabled,
+          smsEnabled: smsEnabled,
+          contactsEnabled: contactsEnabled,
+          linkedBy: result.user.email,
+          linkedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 3500 * 1000).toISOString(),
+          status: 'active'
+        }, { merge: true });
+
+        alert("Successfully linked with Google Workspace! Automated calendars, email invites, and automatic contact syncing authorized.");
+        await fetchWorkspaceStatus();
+      } else {
+        alert("Failed to extract Workspace Access Token.");
+      }
+    } catch (error: any) {
+      console.error("Workspace Auth Error:", error);
+      if (error.code === 'auth/popup-blocked') {
+        alert("Authorization popup was blocked. Please enable popups in your browser to sign into Google.");
+      } else {
+        alert("Workspace auth error: " + error.message);
+      }
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/workspace/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          calendarId: calIdInput,
+          emailEnabled: mailEnabled,
+          smsEnabled: smsEnabled,
+          contactsEnabled: contactsEnabled,
+          onboardingEnabled: onboardingEnabled
+        })
+      });
+      if (res.ok) {
+        alert("Workspace configuration synced successfully!");
+        await fetchWorkspaceStatus();
+      } else {
+        alert("Failed to save workspace configuration.");
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTriggerTest = async () => {
+    setTesting(true);
+    try {
+      const res = await fetch('/api/workspace/test', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message || "Test completed successfully! Google Calendar invite created, confirmation email dispatched, and client added as Google Contact.");
+      } else {
+        alert(data.error || "Sandbox testing failed. Check if Google connection is active.");
+      }
+    } catch (error) {
+      alert("Test request failed: " + (error as Error).message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const filteredBookings = bookings.filter(b => b.type === activeTab);
 
   return (
-    <section className="py-24 bg-white text-slate-900 border-t border-slate-100">
+    <>
+      <section className="py-24 bg-white text-slate-900 border-t border-slate-100">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex flex-col lg:flex-row justify-between items-start gap-12 mb-16">
           <div className="max-w-md">
             <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-4 block">Command Center</span>
             <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-4">Barber <span className="text-brand-blue italic font-serif lowercase tracking-normal">Hub</span></h2>
-            <p className="text-slate-400 text-sm leading-relaxed">Verification and queue control. No-shows are auto-expired after 10 minutes by the system engine.</p>
+            <p className="text-slate-400 text-sm leading-relaxed">Queue control and session management. Google Workspace auto-syncs confirmation invites and reminders.</p>
           </div>
 
           <div className="w-full lg:w-auto space-y-4">
-            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Check-In Verification</p>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  value={verifyCode}
-                  onChange={(e) => setVerifyCode(e.target.value.toUpperCase())}
-                  placeholder="ENTER CODE"
-                  className="bg-white border-2 border-slate-100 px-6 py-3 rounded-2xl font-black text-lg w-full focus:border-brand-blue outline-none transition-all"
-                />
-                <button 
-                  onClick={handleVerify}
-                  disabled={isVerifying}
-                  className="bg-brand-blue text-white px-8 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-900 transition-all disabled:opacity-50"
-                >
-                  {isVerifying ? '...' : 'Verify'}
-                </button>
+            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 flex items-center justify-center">
+              <div className="text-center">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Queue Management</p>
+                <p className="text-[8px] font-black uppercase tracking-widest text-brand-blue animate-pulse">Monitoring Live Sessions</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100 w-fit mb-8">
-          <button onClick={() => setActiveTab('queue')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'queue' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Live Queue</button>
-          <button onClick={() => setActiveTab('scheduled')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'scheduled' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Scheduled</button>
-        </div>
-
-        <div className="grid gap-4">
-          {filteredBookings.length > 0 ? filteredBookings.map((b) => (
-            <motion.div layout key={b.id} className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden group">
-              <div className="flex items-center gap-6 w-full md:w-auto">
-                <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-brand-blue border border-slate-100 text-xl">
-                  {b.userName?.charAt(0)}
-                </div>
-                <div>
-                  <h4 className="font-black uppercase tracking-tight text-xl">{b.userName}</h4>
-                  <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{b.serviceName} • {b.type === 'scheduled' ? b.scheduledAt?.toDate?.()?.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Queue'}</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-                <div className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border ${
-                  b.status === 'checked-in' ? 'bg-blue-50 border-blue-100 text-blue-500' :
-                  b.status === 'in-progress' ? 'bg-yellow-50 border-yellow-100 text-yellow-500' :
-                  'bg-slate-50 border-transparent text-slate-400'
-                }`}>
-                  {b.status.replace('-', ' ')}
-                </div>
-
-                <div className="flex gap-2">
-                  <button onClick={() => sendPing(b.userId, "Please prepare, your session is coming up soon.")} title="Ping Client" className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-blue hover:text-white transition-all"><Bell className="w-4 h-4" /></button>
-                  {b.status === 'checked-in' && (
-                    <button onClick={() => updateStatus(b.id, 'started')} className="flex items-center gap-2 px-6 py-3 bg-brand-blue text-white rounded-xl font-black uppercase text-[10px] hover:bg-slate-900 transition-all">
-                      <Scissors className="w-4 h-4" />
-                      Start Cut
-                    </button>
-                  )}
-                  {b.status === 'started' && (
-                    <button onClick={() => updateStatus(b.id, 'completed')} className="flex items-center gap-2 px-6 py-3 bg-green-500 text-white rounded-xl font-black uppercase text-[10px] hover:bg-green-600 transition-all">
-                      <Trophy className="w-4 h-4" />
-                      Finish Session
-                    </button>
-                  )}
-                  {b.status === 'confirmed' && b.type === 'queue' && (
-                    <button onClick={() => updateStatus(b.id, 'checked-in')} className="px-6 py-3 bg-slate-100 text-slate-900 rounded-xl font-black uppercase text-[10px] hover:bg-slate-200 transition-all">
-                      Manual Check-in
-                    </button>
-                  )}
-                  <button onClick={() => updateStatus(b.id, 'missed')} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              </div>
-            </motion.div>
-          )) : (
-            <div className="py-32 text-center border-2 border-dashed border-slate-100 rounded-[3rem]">
-              <AlertCircle className="w-12 h-12 text-slate-100 mx-auto mb-4" />
-              <p className="text-slate-300 font-black uppercase tracking-[0.4em] text-[10px]">No sessions today</p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {/* Main Bookings List Column (Left, large) */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100 w-fit">
+              <button onClick={() => setActiveTab('queue')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'queue' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Live Queue</button>
+              <button onClick={() => setActiveTab('scheduled')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'scheduled' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Scheduled</button>
+              <button onClick={() => setActiveTab('checkin')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'checkin' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Check-In Desk</button>
             </div>
-          )}
+
+            {activeTab === 'checkin' ? (
+              <div className="space-y-6">
+                <div className="bg-slate-50 border border-slate-100 p-8 rounded-[2.5rem] space-y-6 text-left">
+                  <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                      <Scan className="w-5 h-5 text-brand-blue" />
+                      In-Person Check-In & Stamp Counter
+                    </h3>
+                    <p className="text-xs text-slate-400">Scan member QR codes or lookup manually with User ID to immediately check them in and stamp their loyalty cards.</p>
+                  </div>
+
+                  {/* Manual input & QR Code Scanning Entry Simulator */}
+                  <form onSubmit={(e) => { e.preventDefault(); handleLookupUser(scannedUserId); }} className="space-y-4">
+                    <div className="space-y-1.5 text-left">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">User System ID (Physical QR Scan or Copy-Paste)</label>
+                      <div className="flex gap-3">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            value={scannedUserId}
+                            onChange={(e) => setScannedUserId(e.target.value)}
+                            placeholder="e.g. u7bYtXz26bMcp91W"
+                            className="w-full bg-white text-slate-800 text-xs px-5 py-4 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold font-mono"
+                          />
+                          <span className="absolute right-3 top-3.5 text-[8px] font-black uppercase text-slate-300 pointer-events-none">ID INPUT</span>
+                        </div>
+                        <button
+                          type="submit"
+                          className="px-6 py-4 bg-slate-900 hover:bg-brand-red text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-[0.98]"
+                        >
+                          Lookup Client
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+
+                  {/* Simulated Scanner Laser overlay & Shortcuts */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white border border-slate-200/60 p-5 rounded-2xl flex flex-col justify-between">
+                      <div>
+                        <span className="text-[8px] font-black uppercase tracking-widest text-brand-blue mb-1 block">Live QR Code Scanner Sim</span>
+                        <p className="text-[10px] text-slate-400 leading-relaxed mb-3">Simulate checking-in with an active mobile camera scan feed in the barber shop.</p>
+                      </div>
+
+                      {simulatingScan ? (
+                        <div className="relative aspect-[4/3] max-w-[180px] bg-black rounded-xl overflow-hidden mb-4 mx-auto flex items-center justify-center border-2 border-brand-red">
+                          <div className="absolute top-0 left-0 w-full h-0.5 bg-brand-red animate-bounce"></div>
+                          <span className="text-[8px] font-black text-white/50 uppercase tracking-widest animate-pulse">Running Scan...</span>
+                        </div>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (allUsers.length === 0) {
+                            alert("No clients have registered yet. Register a client first to test scanning.");
+                            return;
+                          }
+                          setSimulatingScan(true);
+                          // Select a random user to mock scan
+                          const randomUser = allUsers[Math.floor(Math.random() * allUsers.length)];
+                          setTimeout(() => {
+                            setSimulatingScan(false);
+                            setScannedUserId(randomUser.id);
+                            handleLookupUser(randomUser.id);
+                          }, 1200);
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-3 bg-brand-blue/10 border border-brand-blue/20 hover:bg-brand-blue/20 text-brand-blue font-black uppercase tracking-widest text-[8px] rounded-xl transition-all"
+                      >
+                        <Scan className={`w-3.5 h-3.5 ${simulatingScan ? 'animate-spin' : ''}`} />
+                        <span>{simulatingScan ? 'Scanning Code...' : 'Simulate Camera QR Scan'}</span>
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200/60 p-5 rounded-2xl">
+                      <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Quick Client Select</span>
+                      <p className="text-[10px] text-slate-400 mb-3">Or click any registered clients from the list below to fill the ID slot instantly:</p>
+                      
+                      <div className="space-y-2 max-h-[110px] overflow-y-auto pr-1">
+                        {allUsers.length > 0 ? (
+                          allUsers.map(u => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                setScannedUserId(u.id);
+                                setLookedUpUser(u);
+                                setLookupError('');
+                                setStampSuccessMsg('');
+                              }}
+                              className="w-full py-2 px-3 text-left bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 font-bold text-[10px] text-slate-700 flex justify-between items-center transition-all"
+                            >
+                              <span className="truncate max-w-[120px] uppercase font-bold">{u.displayName}</span>
+                              <span className="font-mono text-[7px] text-slate-400">{u.id.slice(0, 6)}...</span>
+                            </button>
+                          ))
+                        ) : (
+                          <p className="text-[9px] text-slate-300 italic">No registered clients found</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {lookupError && (
+                    <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-black uppercase tracking-widest text-center">
+                      {lookupError}
+                    </div>
+                  )}
+
+                  {stampSuccessMsg && (
+                    <div className="p-4 bg-green-50 border border-green-100 rounded-xl text-green-600 text-[10px] font-black uppercase tracking-widest text-center">
+                      {stampSuccessMsg}
+                    </div>
+                  )}
+
+                  {/* Looked Up User profile Details & Operations */}
+                  {lookedUpUser && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-6 bg-slate-900 text-white rounded-[2rem] border border-slate-800 space-y-6"
+                    >
+                      <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                        <div>
+                          <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Scanned Profile</p>
+                          <h4 className="text-xl font-black uppercase tracking-tight text-white">{lookedUpUser.displayName}</h4>
+                          <span className="text-[9px] text-slate-300 font-mono select-all font-bold">UID: {lookedUpUser.id}</span>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Loyalty Level</p>
+                          <span className="text-xl font-black text-brand-red">{lookedUpUser.stamps || 0}<span className="text-xs text-white/30">/10 Fills</span></span>
+                        </div>
+                      </div>
+
+                      {/* Display stamps array style */}
+                      <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 p-4 bg-white/5 rounded-xl border border-white/5">
+                        {[...Array(10)].map((_, i) => (
+                          <div key={i} className={`aspect-square rounded-lg border flex items-center justify-center text-[10px] font-black ${i < (lookedUpUser.stamps || 0) ? 'bg-brand-red border-brand-red text-white' : 'border-white/10 text-white/20 bg-white/5'}`}>
+                            {i < (lookedUpUser.stamps || 0) ? <Scissors className="w-2.5 h-2.5" /> : i+1}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleAddStampByAdmin(lookedUpUser.id, lookedUpUser.stamps)}
+                          className="py-3 px-4 bg-brand-red hover:bg-brand-red/90 text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                        >
+                          <Trophy className="w-3.5 h-3.5" />
+                          <span>Add 1 Stamp</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCheckInAndQueue(lookedUpUser)}
+                          className="py-3 px-4 bg-brand-blue hover:bg-brand-blue/90 text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                        >
+                          <Scan className="w-3.5 h-3.5" />
+                          <span>Check In Queue</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleResetStampsByAdmin(lookedUpUser.id)}
+                          className="py-3 px-4 bg-white/5 hover:bg-red-600/30 text-slate-300 hover:text-white font-black uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 active:scale-95 text-center"
+                        >
+                          Reset Stamps
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+
+                {/* All Users Directory */}
+                <div className="bg-white border border-slate-100 p-8 rounded-[2.5rem] shadow-sm text-left">
+                  <div className="mb-4">
+                    <h4 className="text-sm font-black uppercase tracking-wider text-slate-800">Sizabantu Client Directory</h4>
+                    <p className="text-[10px] text-slate-400">Manage stamp counts and quick check-ins for the active customer database.</p>
+                  </div>
+
+                  <div className="grid gap-3 max-h-[300px] overflow-y-auto pr-1">
+                    {allUsers.length > 0 ? (
+                      allUsers.map((client) => (
+                        <div key={client.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div>
+                            <p className="font-extrabold uppercase text-slate-700 text-xs">{client.displayName}</p>
+                            <p className="text-[9px] text-slate-400 select-all font-mono">ID: {client.id} • {client.email}</p>
+                          </div>
+                          
+                          <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-0 pt-2 sm:pt-0 border-slate-200">
+                            <span className="text-[10px] font-black bg-brand-red/10 text-brand-red border border-brand-red/10 px-3 py-1 rounded-xl">
+                              {client.stamps || 0}/10 Stamps
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setScannedUserId(client.id);
+                                setLookedUpUser(client);
+                                setLookupError('');
+                                setStampSuccessMsg('');
+                              }}
+                              className="px-4 py-2 bg-white hover:bg-slate-950 hover:text-white border border-slate-200 text-slate-600 font-black uppercase tracking-widest text-[8px] rounded-xl transition-all"
+                            >
+                              Manage Stamps
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-slate-300 italic text-center py-6 text-xs">No registered clients found</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {filteredBookings.length > 0 ? filteredBookings.map((b) => (
+                  <motion.div layout key={b.id} className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm flex flex-col gap-6 overflow-hidden group">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 w-full">
+                      <div className="flex flex-col md:flex-row items-center gap-6 w-full md:w-auto">
+                        <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-brand-blue border border-slate-100 text-xl flex-shrink-0">
+                          {b.userName?.charAt(0)}
+                        </div>
+                        <div>
+                          <h4 className="font-black uppercase tracking-tight text-xl">{b.userName}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{b.serviceName} • {b.type === 'scheduled' ? (b.scheduledAt?.toDate?.()?.toLocaleDateString() + ' ' + b.scheduledAt?.toDate?.()?.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})) : 'Queue'}</p>
+                          
+                          {/* Real-time sync tracker badge indicators */}
+                          {b.workspaceSync ? (
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                              <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                                b.workspaceSync.calendarSynced ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                              }`}>
+                                <Calendar className="w-2.5 h-2.5" /> GCal Link
+                              </span>
+                              <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                                b.workspaceSync.confirmationEmailSent ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                              }`}>
+                                <Mail className="w-2.5 h-2.5" /> Client Email
+                              </span>
+                              <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                                b.workspaceSync.smsSent ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                              }`}>
+                                <MessageSquare className="w-2.5 h-2.5" /> Client SMS
+                              </span>
+                            </div>
+                          ) : b.type === 'scheduled' ? (
+                            <div className="mt-3 flex gap-1.5">
+                              <span className="inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border bg-slate-50 border-slate-100 text-slate-400">
+                                <RefreshCcw className="w-2.5 h-2.5 animate-spin" /> Workspace Active
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                        <div className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-[0.2em] border ${
+                          b.status === 'checked-in' ? 'bg-blue-50 border-blue-100 text-blue-500' :
+                          b.status === 'in-progress' ? 'bg-yellow-50 border-yellow-105 text-yellow-550' :
+                          b.status === 'confirmed' ? 'bg-green-50 border-green-100 text-green-500' :
+                          'bg-slate-50 border-transparent text-slate-400'
+                        }`}>
+                          {b.status.replace('-', ' ')}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => sendPing(b.userId, "Please prepare, your session is coming up soon.")} title="Ping Client" className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-blue hover:text-white transition-all"><Bell className="w-3.5 h-3.5" /></button>
+                          
+                          {b.type === 'scheduled' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (reschedulingBookingId === b.id) {
+                                  setReschedulingBookingId(null);
+                                } else {
+                                  let d = new Date();
+                                  if (b.scheduledAt) {
+                                    if (typeof b.scheduledAt.toDate === 'function') {
+                                      d = b.scheduledAt.toDate();
+                                    } else if (b.scheduledAt.seconds) {
+                                      d = new Date(b.scheduledAt.seconds * 1000);
+                                    } else {
+                                      d = new Date(b.scheduledAt);
+                                    }
+                                  }
+                                  setRescheduleDate(d.toISOString().split('T')[0]);
+                                  setRescheduleTime(d.toTimeString().split(' ')[0].slice(0, 5));
+                                  setReschedulingBookingId(b.id);
+                                }
+                              }}
+                              title="Reschedule Booking"
+                              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-black uppercase text-[9px] transition-all border ${
+                                reschedulingBookingId === b.id
+                                  ? 'bg-brand-red text-white border-brand-red'
+                                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-900 hover:text-white hover:border-slate-900'
+                              }`}
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span className="text-[8px] font-black uppercase tracking-wider">Reschedule</span>
+                            </button>
+                          )}
+
+                          {b.status === 'confirmed' && (
+                            <button type="button" onClick={() => updateStatus(b.id, 'started')} className="flex items-center gap-2 px-5 py-2.5 bg-brand-blue text-white rounded-xl font-black uppercase text-[9px] hover:bg-slate-900 transition-all">
+                              <Scissors className="w-3.5 h-3.5" />
+                              Start
+                            </button>
+                          )}
+                          {b.status === 'started' && (
+                            <button type="button" onClick={() => setBookingToComplete(b)} className="flex items-center gap-2 px-5 py-2.5 bg-green-500 text-white rounded-xl font-black uppercase text-[9px] hover:bg-green-600 transition-all">
+                              <Trophy className="w-3.5 h-3.5" />
+                              Finish
+                            </button>
+                          )}
+                          {b.status === 'completed' && (
+                            <button 
+                              type="button" 
+                              onClick={() => {
+                                setSelectedReceiptBooking(b);
+                                setShowReceiptModal(true);
+                              }}
+                              className="flex items-center gap-1.5 px-4 py-2.5 bg-green-500 text-white rounded-xl font-black uppercase text-[9px] hover:bg-slate-900 transition-all shadow-md cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span className="text-[8px] font-black uppercase tracking-wider">Receipt</span>
+                            </button>
+                          )}
+                          <button type="button" onClick={() => updateStatus(b.id, 'missed')} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {reschedulingBookingId === b.id && (
+                      <div className="w-full border-t border-slate-100 pt-6 mt-2 flex flex-col sm:flex-row items-end gap-4">
+                        <div className="flex-1 w-full text-left space-y-1.5">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Select New Date</label>
+                          <input
+                            type="date"
+                            value={rescheduleDate}
+                            onChange={(e) => setRescheduleDate(e.target.value)}
+                            className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold"
+                          />
+                        </div>
+                        <div className="flex-1 w-full text-left space-y-1.5">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Select New Time</label>
+                          <input
+                            type="time"
+                            value={rescheduleTime}
+                            onChange={(e) => setRescheduleTime(e.target.value)}
+                            className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold"
+                          />
+                        </div>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleReschedule(b, rescheduleDate, rescheduleTime)}
+                            className="flex-1 sm:flex-none px-6 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-widest text-[9px] shadow-sm hover:scale-[1.02] transition-all"
+                          >
+                            Save Change
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReschedulingBookingId(null)}
+                            className="flex-1 sm:flex-none px-5 py-3.5 bg-slate-100 text-slate-500 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-slate-200 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )) : (
+                  <div className="py-24 text-center border border-dashed border-slate-100 rounded-[3rem]">
+                    <AlertCircle className="w-12 h-12 text-slate-100 mx-auto mb-4" />
+                    <p className="text-slate-300 font-black uppercase tracking-[0.4em] text-[10px]">No sessions today</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Google Workspace Integration Side Column (Right, small) */}
+          <div className="bg-slate-50 border border-slate-100 p-8 rounded-[3rem] space-y-6 shadow-sm">
+            <div className="border-b border-slate-200/50 pb-6">
+              <span className="text-brand-blue font-black uppercase tracking-[0.3em] text-[8px] mb-2 block">Google Integration</span>
+              <h3 className="text-xl font-black uppercase tracking-tight">Workspace Panel</h3>
+              <p className="text-[11px] text-slate-400 leading-relaxed mt-1">Configure automated bookings on Google Cal and sync instant client messages/emails.</p>
+            </div>
+
+            {/* Connection Status Card */}
+            <div className="bg-white p-5 rounded-[2rem] border border-slate-100 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Connection</span>
+                {wsStatus.linked ? (
+                  <span className="inline-flex items-center gap-1.5 text-[8px] font-black bg-green-50 border border-green-100 text-green-600 uppercase tracking-widest px-2.5 py-1 rounded-xl">
+                    ● Connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-[8px] font-black bg-red-50 border border-red-100 text-red-500 uppercase tracking-widest px-2.5 py-1 rounded-xl animate-pulse">
+                    ● Disconnected
+                  </span>
+                )}
+              </div>
+
+              {wsStatus.linked ? (
+                <div className="space-y-2 text-slate-400">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-300 mb-1">Authenticated Admin Account</p>
+                  <p className="text-[11px] font-bold text-slate-700 break-all">{wsStatus.linkedBy}</p>
+                  <div className="flex justify-between items-center text-[9px] mt-2 pt-2 border-t border-slate-100">
+                    <span>Authorized At:</span>
+                    <span className="font-bold text-slate-500">{wsStatus.linkedAt ? new Date(wsStatus.linkedAt).toLocaleDateString() : 'Active'}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400 leading-relaxed">Please authenticate Google Workspace using your Sizabantu Google Business account to enable Calendar & Gmail send scopes immediately.</p>
+              )}
+
+              <button
+                onClick={handleLinkWorkspace}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-brand-blue hover:bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider text-[9px] transition-all cursor-pointer shadow-sm"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                {wsStatus.linked ? 'Reconnect Google Account' : 'Connect Google Workspace'}
+              </button>
+            </div>
+
+            {/* Settings Settings Card */}
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 space-y-4">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Automation Services</span>
+
+              {/* Calendar ID Field */}
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Sizabantu Calendar ID</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={calIdInput || ''}
+                    onChange={(e) => setCalIdInput(e.target.value)}
+                    placeholder="primary"
+                    className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200/60 focus:outline-none focus:border-brand-blue font-bold"
+                  />
+                  <span className="absolute right-3 top-3 text-[8px] font-black uppercase text-slate-300 pointer-events-none">Default</span>
+                </div>
+              </div>
+
+               {/* Confirmation Emails Checkbox */}
+              <div className="flex items-center justify-between py-1.5 border-t border-b border-dashed border-slate-100">
+                <div>
+                  <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Automated Email</label>
+                  <span className="text-[9px] text-slate-400 block">Dispatch confirmation and checks</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={mailEnabled}
+                  onChange={(e) => setMailEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+                />
+              </div>
+
+              {/* Onboarding Welcome Sequence Checkbox */}
+              <div className="flex items-center justify-between py-1.5 border-b border-dashed border-slate-100">
+                <div>
+                  <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Onboarding welcome flow</label>
+                  <span className="text-[9px] text-slate-400 block">Auto-welcome tips and 7-day review follow-up</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={onboardingEnabled}
+                  onChange={(e) => setOnboardingEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+                />
+              </div>
+
+              {/* SMS Alerts Checkbox */}
+              <div className="flex items-center justify-between py-1.5 border-b border-dashed border-slate-100">
+                <div>
+                  <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Simulated SMS Alerts</label>
+                  <span className="text-[9px] text-slate-400 block">Dispatch 2hr pre-arrival alerts</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={smsEnabled}
+                  onChange={(e) => setSmsEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+                />
+              </div>
+
+              {/* Contacts Sync Checkbox */}
+              <div className="flex items-center justify-between py-1.5">
+                <div>
+                  <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Automated Contacts Sync</label>
+                  <span className="text-[9px] text-slate-400 block">Link client as Google Contact on booking</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={contactsEnabled}
+                  onChange={(e) => setContactsEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+                />
+              </div>
+
+              {/* Save Configuration Settings */}
+              <button
+                disabled={saving}
+                onClick={handleSaveConfig}
+                className="w-full py-3 bg-brand-red hover:bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider text-[9px] transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {saving ? 'Syncing...' : 'Save Workspace Config'}
+              </button>
+            </div>
+
+            {/* Test Sandbox Testing Sandbox Panel */}
+            {wsStatus.linked && (
+              <div className="bg-slate-100/50 p-5 rounded-[2rem] border border-dashed border-slate-200 text-center space-y-3">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Diagnostics Lab</span>
+                <p className="text-[10px] text-slate-400 leading-relaxed">Launch a live integration test sandbox. Failsafe diagnostics code will sync a test booking structure to your current Google account.</p>
+                <button
+                  disabled={testing}
+                  onClick={handleTriggerTest}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-4 bg-white hover:bg-slate-900 hover:text-white text-slate-600 rounded-xl font-black uppercase tracking-wider text-[8px] transition-all border border-slate-200 cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  <RefreshCcw className={`w-3 h-3 ${testing ? 'animate-spin' : ''}`} />
+                  {testing ? 'Testing Engine...' : 'Run Diagnostics Test'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>
-  );
+
+    {/* Booking Completion Confirmation Modal */}
+    <AnimatePresence>
+      {bookingToComplete && (
+        <motion.div 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2030] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+        >
+          <motion.div 
+            initial={{ scale: 0.95, y: 15 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 15 }}
+            className="max-w-md w-full bg-white border border-slate-100 rounded-[2rem] shadow-2xl relative overflow-hidden p-8 flex flex-col"
+          >
+            {/* Alert Indicator */}
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mb-6">
+              <AlertCircle className="w-6 h-6 animate-pulse" />
+            </div>
+
+            <div className="text-center space-y-2 mb-6">
+              <h3 className="text-lg font-black uppercase tracking-tight text-slate-900">
+                Complete Booking?
+              </h3>
+              <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                Please confirm that you want to complete this session. This action changes the booking status to completed and increments the client’s loyalty stamps.
+              </p>
+            </div>
+
+            {/* Quick Summary Card */}
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-3 mb-6 text-left">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Client Name</span>
+                <span className="text-xs font-bold text-slate-900">{bookingToComplete.userName}</span>
+              </div>
+              <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Selected Service</span>
+                <span className="text-xs font-bold text-slate-900">{bookingToComplete.serviceName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Total Price</span>
+                <span className="text-sm font-black font-mono text-brand-red">R{bookingToComplete.price || 0}</span>
+              </div>
+            </div>
+
+            {/* Loyalty Notice */}
+            <div className="border border-brand-blue/15 bg-brand-blue/5 rounded-2xl p-4 flex gap-3 text-left mb-8">
+              <Trophy className="w-4 h-4 text-brand-blue shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-900">Loyalty Stamps +1</p>
+                <p className="text-[10px] text-slate-500 font-medium leading-relaxed mt-0.5">
+                  At 5 stamps, this client will unlock a **Free Cap**, and at 10 stamps, a **Free Haircut**.
+                </p>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setBookingToComplete(null)}
+                className="flex-1 py-3 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const bId = bookingToComplete.id;
+                  setBookingToComplete(null);
+                  await updateStatus(bId, 'completed');
+                }}
+                className="flex-1 py-3 text-white bg-green-500 hover:bg-green-600 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer shadow-md"
+              >
+                Yes, complete
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Transaction Receipt Modal for Admin Dashboard */}
+    <AnimatePresence>
+      {showReceiptModal && selectedReceiptBooking && (
+        <motion.div 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2020] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+        >
+          <motion.div 
+            initial={{ scale: 0.95, y: 15 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 15 }}
+            className="max-w-md w-full bg-[#f8f9fa] border-4 border-slate-200 rounded-[2rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div 
+              id="printable-receipt-modal" 
+              className="p-8 pb-4 text-left overflow-y-auto flex-1 font-mono text-slate-800"
+            >
+              {/* Receipt Header */}
+              <div className="text-center space-y-1 mb-6 border-b-2 border-dashed border-slate-300 pb-5">
+                <h3 className="text-xl font-black uppercase tracking-tight text-slate-950 font-sans">Sizabantu Barbershop</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Premium Grooming Experience</p>
+                <p className="text-[8px] tracking-widest text-slate-400">ESTABLISHED IN 2022 • SOUTH AFRICA</p>
+                <div className="pt-2 text-[9px] text-slate-500 uppercase font-bold">
+                  OFFICIAL CUSTOMER RECEIPT
+                </div>
+              </div>
+
+              {/* Booking & Transaction Meta */}
+              <div className="space-y-2 text-xs mb-6 border-b border-dashed border-slate-200 pb-5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Booking Ref:</span>
+                  <span className="font-bold text-slate-900">#{selectedReceiptBooking.id.toUpperCase().slice(0, 10)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Date & Time:</span>
+                  <span className="font-bold text-slate-900">
+                    {(() => {
+                      if (selectedReceiptBooking.scheduledAt) {
+                        try {
+                          let d: Date;
+                          if (typeof selectedReceiptBooking.scheduledAt.toDate === 'function') {
+                            d = selectedReceiptBooking.scheduledAt.toDate();
+                          } else if (selectedReceiptBooking.scheduledAt.seconds) {
+                            d = new Date(selectedReceiptBooking.scheduledAt.seconds * 1000);
+                          } else {
+                            d = new Date(selectedReceiptBooking.scheduledAt);
+                          }
+                          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        } catch (e) {
+                          return String(selectedReceiptBooking.scheduledAt);
+                        }
+                      } else if (selectedReceiptBooking.createdAt) {
+                        try {
+                          let d: Date;
+                          if (typeof selectedReceiptBooking.createdAt.toDate === 'function') {
+                            d = selectedReceiptBooking.createdAt.toDate();
+                          } else if (selectedReceiptBooking.createdAt.seconds) {
+                            d = new Date(selectedReceiptBooking.createdAt.seconds * 1000);
+                          } else {
+                            d = new Date(selectedReceiptBooking.createdAt);
+                          }
+                          return d.toLocaleDateString() + ' (Walk-In)';
+                        } catch (e) {}
+                      }
+                      return 'Walk-In Session';
+                    })()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Client Name:</span>
+                  <span className="font-extrabold text-slate-900 uppercase">{selectedReceiptBooking.userName || 'Client (Direct Guest)'}</span>
+                </div>
+                {selectedReceiptBooking.verificationCode && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Security Pin:</span>
+                    <span className="font-bold text-brand-red">{selectedReceiptBooking.verificationCode}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Items and Totals */}
+              <div className="mb-6">
+                <div className="flex justify-between font-bold text-[10px] text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-300">
+                  <span>Selected Service</span>
+                  <div className="flex gap-8">
+                    <span>QTY</span>
+                    <span>PRICE</span>
+                  </div>
+                </div>
+                
+                <div className="flex justify-between text-xs py-3.5 border-b border-slate-200">
+                  <span className="font-extrabold text-slate-900 uppercase truncate max-w-[180px]">
+                    {selectedReceiptBooking.serviceName || 'Premium Haircut'}
+                  </span>
+                  <div className="flex gap-11 shrink-0">
+                    <span>1</span>
+                    <span className="font-bold text-slate-950">R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-4">
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase text-[10px]">Subtotal:</span>
+                    <span>R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase text-[10px]">Vat (15%):</span>
+                    <span>R0.00</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t border-slate-300">
+                    <span className="uppercase text-[11px] tracking-wider">Grand Total:</span>
+                    <span className="text-[17px] font-sans font-black italic">R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CSS Barcode sequence decoration */}
+              <div className="flex justify-center items-center gap-[1px] h-12 bg-white px-4 py-2 border border-slate-200 my-6">
+                {[...Array(35)].map((_, i) => {
+                  const widthClass = i % 2 === 0 ? 'w-[1.5px]' : i % 3 === 0 ? 'w-[3px]' : i % 5 === 0 ? 'w-[4px]' : 'w-[1px]';
+                  return (
+                    <div key={i} className={`h-full bg-slate-950 ${widthClass}`} />
+                  );
+                })}
+              </div>
+
+              {/* Footer Greeting */}
+              <div className="text-center space-y-1.5 text-[9px] text-slate-400">
+                <p className="font-black text-slate-600 uppercase">Thank you for your valuable support!</p>
+                <p>Sizabantu Barbershop | Established 2022</p>
+                <p className="font-mono text-[7px] text-slate-300 mt-2">TRANS-ID: {selectedReceiptBooking.id.toUpperCase()}</p>
+              </div>
+            </div>
+
+            {/* Action utilities - hidden during browser print */}
+            <div className="no-print p-6 bg-slate-100 border-t border-slate-200 flex flex-col gap-2 rounded-b-[2rem]">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Receipt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPDF(selectedReceiptBooking)}
+                  className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-red text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download PDF
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReceiptModal(false);
+                  setSelectedReceiptBooking(null);
+                }}
+                className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px] py-3.5 rounded-xl transition-all cursor-pointer focus:outline-none"
+              >
+                Close Receipt
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </>
+);
 };
 
 const BookingSystem = ({ profile }: { profile: any }) => {
   const { 
     authStep, setAuthStep, email, setEmail, 
     otp, setOtp, isSendingCode, requestOTP, 
-    verifyOTP, loginGoogle, handleFirestoreError 
+    verifyOTP, loginGoogle, handleFirestoreError,
+    emailError, otpError
   } = useAuth();
   const [activeBooking, setActiveBooking] = useState<any>(null);
   const [queue, setQueue] = useState<any[]>([]);
+  const [userBookings, setUserBookings] = useState<any[]>([]);
   const [bookingFlow, setBookingFlow] = useState<'none' | 'queue' | 'scheduled'>('none');
   const [selectedService, setSelectedService] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedTime, setSelectedTime] = useState<string>('');
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-  const [paymentStep, setPaymentStep] = useState(false);
-
-  const services = [
-    { id: 'buzz', name: 'Buzz Cut', price: 150, time: '30m' },
-    { id: 'fade', name: 'Skin Fade', price: 250, time: '45m' },
-    { id: 'beard', name: 'Beard Trim', price: 100, time: '20m' },
-  ];
-
-  const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [confirmedBookingDetails, setConfirmedBookingDetails] = useState<any | null>(null);
 
   useEffect(() => {
-    if (!profile) return;
+    const handleSelectService = (e: any) => {
+      const { serviceId } = e.detail || {};
+      if (serviceId) {
+        setSelectedService(serviceId);
+        if (bookingFlow === 'none') {
+          setBookingFlow('scheduled');
+        }
+        const bookSec = document.getElementById('book');
+        if (bookSec) {
+          bookSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    };
+    window.addEventListener('select-service', handleSelectService);
+    return () => window.removeEventListener('select-service', handleSelectService);
+  }, [bookingFlow]);
+
+  // Receipt States for Client History Print
+  const [selectedReceiptBooking, setSelectedReceiptBooking] = useState<any | null>(null);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+
+  const handleDownloadPDF = (booking: any) => {
+    if (!booking) return;
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a6'
+      });
+
+      // Headers and metadata
+      doc.setTextColor(24, 28, 36);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('SIZABANTU BARBERSHOP', 10, 15);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text('ESTABLISHED IN 2022', 10, 20);
+      doc.text('PREMIUM GROOMING EXPERIENCE', 10, 24);
+      
+      // Divider line
+      doc.setLineWidth(0.25);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(10, 28, 95, 28);
+      
+      // Transaction Title
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('TRANSACTION RECEIPT', 10, 34);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(`Booking Ref: #${booking.id.toUpperCase().slice(0, 8)}`, 10, 40);
+      
+      let dateStr = 'N/A';
+      if (booking.scheduledAt) {
+        let d: Date;
+        if (typeof booking.scheduledAt.toDate === 'function') {
+          d = booking.scheduledAt.toDate();
+        } else if (booking.scheduledAt.seconds) {
+          d = new Date(booking.scheduledAt.seconds * 1000);
+        } else {
+          d = new Date(booking.scheduledAt);
+        }
+        dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+      } else if (booking.createdAt) {
+        let d: Date;
+        if (typeof booking.createdAt.toDate === 'function') {
+          d = booking.createdAt.toDate();
+        } else if (booking.createdAt.seconds) {
+          d = new Date(booking.createdAt.seconds * 1000);
+        } else {
+          d = new Date(booking.createdAt);
+        }
+        dateStr = d.toLocaleDateString() + ' (Walk-In)';
+      }
+      
+      doc.text(`Date of Service: ${dateStr}`, 10, 45);
+      doc.text(`Client Name: ${booking.userName || 'Valued Customer'}`, 10, 50);
+      
+      // Divider
+      doc.line(10, 55, 95, 55);
+      
+      // Table Header row
+      doc.setFont('helvetica', 'bold');
+      doc.text('SERVICE', 10, 61);
+      doc.text('QTY', 65, 61);
+      doc.text('PRICE', 80, 61);
+      
+      // Table Header line
+      doc.line(10, 64, 95, 64);
+      
+      // Table content row
+      doc.setFont('helvetica', 'normal');
+      const sName = booking.serviceName || 'Grooming Service';
+      const truncatedName = sName.length > 22 ? sName.substring(0, 19) + '...' : sName;
+      doc.text(truncatedName, 10, 70);
+      doc.text('1', 67, 70);
+      doc.text(`R${booking.totalPaid || 50}`, 80, 70);
+      
+      // Total divider line
+      doc.setLineWidth(0.5);
+      doc.line(10, 76, 95, 76);
+      
+      // Grand Total
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('Grand Total:', 10, 83);
+      doc.text(`R${booking.totalPaid || 50}`, 80, 83);
+      
+      // Barcode simulation lines
+      doc.setLineWidth(0.4);
+      for (let i = 0; i < 28; i++) {
+        const xPos = 12 + i * 2.5;
+        const stripeWidth = (i % 3 === 0) ? 0.8 : (i % 5 === 0 ? 1.2 : 0.4);
+        doc.setLineWidth(stripeWidth);
+        doc.line(xPos, 94, xPos, 110);
+      }
+      
+      // Footer block
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.text('Thank you for choosing Sizabantu Barbershop!', 52, 118, { align: 'center' });
+      doc.text('Crafted for perfection. Est. 2022', 52, 122, { align: 'center' });
+      
+      doc.save(`Sizabantu_Receipt_${booking.id.slice(0, 5).toUpperCase()}.pdf`);
+    } catch (e: any) {
+      alert("Error generating PDF: " + e.message);
+    }
+  };
+
+  const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
+  
+  // Generate next 7 days for the calendar
+  const nextDates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    return {
+      full: d.toISOString().split('T')[0],
+      day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      date: d.getDate(),
+      isToday: i === 0
+    };
+  });
+
+  useEffect(() => {
+    if (!profile) {
+      setUserBookings([]);
+      setActiveBooking(null);
+      return;
+    }
 
     const q = query(
       collection(db, 'bookings'),
-      where('userId', '==', profile.uid),
-      where('status', 'in', ['pending', 'confirmed', 'checked-in', 'in-progress']),
-      limit(1)
+      where('userId', '==', profile.uid)
     );
 
     const unsubscribeBookings = onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        setActiveBooking({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      const bookingsList: any[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        let dateVal = 0;
+        if (data.createdAt) {
+          if (typeof data.createdAt.toMillis === 'function') {
+            dateVal = data.createdAt.toMillis();
+          } else if (data.createdAt.seconds) {
+            dateVal = data.createdAt.seconds * 1000;
+          } else {
+            dateVal = new Date(data.createdAt).getTime();
+          }
+        }
+        bookingsList.push({ id: doc.id, ...data, _createdTime: dateVal });
+      });
+
+      // Sort bookings by creation date descending
+      bookingsList.sort((a, b) => b._createdTime - a._createdTime);
+      setUserBookings(bookingsList);
+
+      // Extract active booking: the first one with an active status
+      const active = bookingsList.find(b => 
+        ['pending', 'confirmed', 'checked-in', 'in-progress'].includes(b.status)
+      );
+
+      if (active) {
+        setActiveBooking(active);
         setBookingFlow('none');
       } else {
         setActiveBooking(null);
       }
-    }, (error) => handleFirestoreError(error, 'get' as any, 'bookings'));
+    }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
 
     const queueQuery = query(
       collection(db, 'bookings'),
@@ -559,23 +2080,60 @@ const BookingSystem = ({ profile }: { profile: any }) => {
     };
   }, [profile]);
 
-  const createBooking = async (type: 'queue' | 'scheduled') => {
-    if (!profile || !selectedService) return;
-    
-    setIsProcessingPayment(true);
-    // Simulate Payment Gateway Handshake (Stripe/Yoco)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  const handleQuickRebook = (serviceId: string) => {
+    setSelectedService(serviceId);
+    setBookingFlow('scheduled');
+    const bookEl = document.getElementById('book');
+    if (bookEl) {
+      bookEl.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
-    const service = services.find(s => s.id === selectedService);
+  const pastBookings = React.useMemo(() => {
+    return userBookings.filter(b => 
+      !['pending', 'confirmed', 'checked-in', 'in-progress'].includes(b.status)
+    );
+  }, [userBookings]);
+
+  const favoriteServicesList = React.useMemo(() => {
+    if (!pastBookings.length) return [];
+    
+    // Count occurrences of each serviceId
+    const counts: Record<string, number> = {};
+    pastBookings.forEach((b) => {
+      if (b.serviceId) {
+        counts[b.serviceId] = (counts[b.serviceId] || 0) + 1;
+      }
+    });
+
+    // Create a list with counts and sort by booking count descending
+    return Object.entries(counts)
+      .map(([serviceId, count]) => {
+        const s = SERVICES.find((service) => service.id === serviceId);
+        return { service: s, count };
+      })
+      .filter((item) => item.service !== undefined)
+      .sort((a, b) => b.count - a.count);
+  }, [pastBookings]);
+
+  const createBooking = async (type: 'queue' | 'scheduled') => {
+    if (!profile) {
+      setShowLoginModal(true);
+      return;
+    }
+    if (!selectedService) return;
+
     let scheduledDate = serverTimestamp();
 
     if (type === 'scheduled' && selectedTime) {
-      const today = new Date();
+      const bookingDate = new Date(selectedDate);
       const [hours, minutes] = selectedTime.split(':');
-      today.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-      scheduledDate = Timestamp.fromDate(today);
+      bookingDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+      scheduledDate = Timestamp.fromDate(bookingDate);
     }
 
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const service = SERVICES.find(s => s.id === selectedService);
     const bookingData = {
       userId: profile.uid,
       userName: profile.displayName,
@@ -585,306 +2143,679 @@ const BookingSystem = ({ profile }: { profile: any }) => {
       clientAddress: 'Klipfontein View Shop',
       travelFee: 0,
       totalPaid: (service?.price || 0),
-      status: 'confirmed', // Confirmed after payment simulation
+      status: 'confirmed', 
       serviceId: selectedService,
       serviceName: service?.name || 'Custom Cut',
-      verificationCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
       scheduledAt: scheduledDate,
+      verificationCode,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
 
     try {
-      await addDoc(collection(db, 'bookings'), bookingData);
+      const docRef = await addDoc(collection(db, 'bookings'), bookingData);
       
       // Emit to server to trigger Google Calendar sync
       socket.emit('booking:new', { 
         ...bookingData, 
+        id: docRef.id,
         scheduledAt: scheduledDate instanceof Timestamp ? scheduledDate.toDate().toISOString() : new Date().toISOString() 
       });
 
+      // Format display time
+      let displayTime = 'Walk-In Now (Live Queue)';
+      if (type === 'scheduled' && selectedTime) {
+        try {
+          const d = new Date(selectedDate);
+          const formattedDate = d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+          displayTime = `${formattedDate} at ${selectedTime}`;
+        } catch (e) {
+          displayTime = `${selectedDate} at ${selectedTime}`;
+        }
+      }
+
+      setConfirmedBookingDetails({
+        ...bookingData,
+        id: docRef.id,
+        servicePrice: service?.price || 0,
+        serviceDesc: service?.desc || '',
+        count: 1,
+        displayTime,
+        queuePosition: type === 'queue' ? (queue.length + 1) : null,
+        estimatedWait: type === 'queue' ? (queue.length * 15) : null,
+      });
+
       setBookingFlow('none');
-      setPaymentStep(false);
       setSelectedService('');
       setSelectedTime('');
     } catch (err) {
       console.error("Booking Error:", err);
-    } finally {
-      setIsProcessingPayment(false);
     }
   };
-
-  if (!profile) return (
-    <section id="book" className="py-32 bg-slate-900 border-t border-white/5 overflow-hidden relative">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-brand-red/10 via-transparent to-transparent opacity-50"></div>
-      <div className="max-w-xl mx-auto px-6 text-center relative z-10">
-        <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-8 block">Step Into The Realm</span>
-        <h2 className="text-5xl md:text-7xl font-black uppercase tracking-tighter text-white leading-[0.85] mb-12">
-          Identity <br /> <span className="text-brand-blue italic font-serif lowercase tracking-normal">Verification</span>
-        </h2>
-        
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] shadow-2xl shadow-black/50">
-          <AnimatePresence mode="wait">
-            {authStep === 'methods' && (
-              <motion.div 
-                key="methods"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-4"
-              >
-                <button 
-                  onClick={() => setAuthStep('email')}
-                  className="w-full bg-white text-slate-900 py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red hover:text-white transition-all transition-all flex items-center justify-center gap-3"
-                >
-                  <Mail className="w-4 h-4" />
-                  Continue with Email
-                </button>
-                <div className="flex items-center gap-4 py-4">
-                  <div className="h-px flex-1 bg-white/10"></div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/20">or alternative</span>
-                  <div className="h-px flex-1 bg-white/10"></div>
-                </div>
-                <button 
-                  onClick={loginGoogle}
-                  className="w-full bg-white/5 border border-white/10 text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-white/10 transition-all flex items-center justify-center gap-3"
-                >
-                  <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
-                  Google Workspace
-                </button>
-              </motion.div>
-            )}
-
-            {authStep === 'email' && (
-              <motion.form 
-                key="email"
-                onSubmit={requestOTP}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="space-y-6"
-              >
-                <p className="text-white/40 text-xs font-bold font-serif italic mb-6">Enter your email. A 6-digit access code will be generated for your session.</p>
-                <input 
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@domain.com"
-                  required
-                  className="w-full bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-bold outline-none focus:border-brand-blue transition-all"
-                />
-                <button 
-                  type="submit"
-                  disabled={isSendingCode}
-                  className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-red-500/20"
-                >
-                  {isSendingCode ? 'Sending...' : 'Request Access Code'}
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setAuthStep('methods')}
-                  className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white"
-                >
-                  Go Back
-                </button>
-              </motion.form>
-            )}
-
-            {authStep === 'otp' && (
-              <motion.form 
-                key="otp"
-                onSubmit={verifyOTP}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="space-y-6"
-              >
-                <div className="flex flex-col items-center mb-6">
-                  <div className="w-16 h-16 bg-brand-blue/10 rounded-full flex items-center justify-center mb-4">
-                    <ShieldCheck className="w-8 h-8 text-brand-blue" />
-                  </div>
-                  <p className="text-white/40 text-xs font-bold font-serif italic">Access code sent to {email}</p>
-                </div>
-                <input 
-                  type="text"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="000 000"
-                  required
-                  className="w-full bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-black text-4xl text-center tracking-[0.5em] outline-none focus:border-brand-blue transition-all"
-                />
-                <button 
-                  type="submit"
-                  className="w-full bg-brand-blue text-white py-6 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-blue-500/20"
-                >
-                  Verify & Enter
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setAuthStep('email')}
-                  className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-white"
-                >
-                  Change Email
-                </button>
-              </motion.form>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
-    </section>
-  );
 
   return (
     <section id="book" className="py-24 bg-slate-900 text-white overflow-hidden relative scroll-mt-20">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
       
-      {/* Payment Bridge Overlay */}
+      {/* Digital QR ID Pass Modal */}
       <AnimatePresence>
-        {isProcessingPayment && (
+        {showQRModal && profile && (
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[2000] bg-slate-900 flex items-center justify-center p-6"
+            className="fixed inset-0 z-[2000] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-6 text-white"
           >
-            <div className="max-w-md w-full bg-white rounded-[3rem] p-12 text-slate-900 text-center shadow-3xl">
-              <div className="flex justify-center mb-8">
-                <div className="w-16 h-16 bg-slate-50 flex items-center justify-center rounded-2xl animate-pulse">
-                  <ShieldCheck className="w-8 h-8 text-brand-blue" />
-                </div>
-              </div>
-              <h3 className="text-2xl font-black uppercase tracking-tight mb-4">Securing Session</h3>
-              <p className="text-slate-400 text-xs font-bold leading-relaxed mb-8">Handshaking with payment gateway. Do not refresh or close this window. Your slot is being held.</p>
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="max-w-md w-full bg-slate-800 border border-white/10 rounded-[3rem] p-10 text-center shadow-3xl relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-15 pointer-events-none"></div>
               
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-300">
-                  <span>Authorizing Card</span>
-                  <div className="w-2 h-2 bg-brand-blue rounded-full animate-ping"></div>
-                </div>
-                <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }} 
-                    animate={{ width: "100%" }} 
-                    transition={{ duration: 2 }}
-                    className="h-full bg-brand-blue"
-                  ></motion.div>
+              <button 
+                onClick={() => setShowQRModal(false)}
+                className="absolute top-8 right-8 p-3 bg-white/5 hover:bg-white/15 text-white/50 hover:text-white rounded-2xl transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex justify-center mb-6">
+                <div className="w-14 h-14 bg-brand-red/10 border border-brand-red/25 rounded-2xl flex items-center justify-center text-brand-red animate-pulse">
+                  <QrCode className="w-7 h-7" />
                 </div>
               </div>
-              <p className="mt-8 text-[8px] font-black uppercase tracking-[0.4em] text-slate-200">Sizabantu Barbershop • Secure Link</p>
-            </div>
+
+              <h3 className="text-2xl font-black uppercase tracking-tight mb-2">Your Digital Pass</h3>
+              <p className="text-slate-400 text-xs mb-6 max-w-sm mx-auto leading-relaxed">
+                Present this unique QR code to the barber at checkout to log your in-person visit and claim your loyalty stamps!
+              </p>
+
+              {/* QR Code Graphic Frame */}
+              <div className="relative mx-auto w-56 h-56 bg-white p-4 rounded-[2rem] shadow-2xl flex items-center justify-center border border-white/10 mb-6 group">
+                <div className="absolute -inset-2 rounded-[2.5rem] bg-gradient-to-tr from-brand-red to-brand-blue opacity-20 blur-lg group-hover:opacity-30 transition-opacity"></div>
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f172a&data=${profile.uid}`}
+                  alt="Sizabantu Loyalty QR Code"
+                  className="w-48 h-48 relative z-10 select-none pointer-events-none rounded-lg"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              {/* User Details Box */}
+              <div className="bg-white/5 border border-white/5 rounded-2xl p-4 mb-4 text-left">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Member Account</p>
+                <p className="font-extrabold uppercase text-white tracking-tight">{profile.displayName || 'Sizabantu Client'}</p>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-2 border-t border-white/5">
+                  <span className="font-mono text-white/40 break-all select-all">ID: {profile.uid}</span>
+                  <span className="font-black text-brand-red hover:underline cursor-pointer flex items-center gap-1 select-none shrink-0" onClick={() => {
+                    navigator.clipboard.writeText(profile.uid);
+                    alert("User ID copied to clipboard!");
+                  }}>
+                    Copy ID
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowQRModal(false)}
+                className="w-full bg-white/5 hover:bg-white/10 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-xl transition-all border border-white/10"
+              >
+                Close Pass
+              </button>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
-      
+
+      {/* Transaction Receipt Modal */}
+      <AnimatePresence>
+        {showReceiptModal && selectedReceiptBooking && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2020] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="max-w-md w-full bg-[#f8f9fa] border-4 border-slate-200 rounded-[2rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div 
+                id="printable-receipt-modal" 
+                className="p-8 pb-4 text-left overflow-y-auto flex-1 font-mono text-slate-800"
+              >
+                {/* Receipt Header */}
+                <div className="text-center space-y-1 mb-6 border-b-2 border-dashed border-slate-300 pb-5">
+                  <h3 className="text-xl font-black uppercase tracking-tight text-slate-950 font-sans">Sizabantu Barbershop</h3>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Premium Grooming Experience</p>
+                  <p className="text-[8px] tracking-widest text-slate-400">ESTABLISHED IN 2022 • SOUTH AFRICA</p>
+                  <div className="pt-2 text-[9px] text-slate-500 uppercase font-bold">
+                    OFFICIAL CUSTOMER RECEIPT
+                  </div>
+                </div>
+
+                {/* Booking & Transaction Meta */}
+                <div className="space-y-2 text-xs mb-6 border-b border-dashed border-slate-200 pb-5">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Booking Ref:</span>
+                    <span className="font-bold text-slate-900">#{selectedReceiptBooking.id.toUpperCase().slice(0, 10)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Date & Time:</span>
+                    <span className="font-bold text-slate-900">
+                      {(() => {
+                        if (selectedReceiptBooking.scheduledAt) {
+                          try {
+                            let d: Date;
+                            if (typeof selectedReceiptBooking.scheduledAt.toDate === 'function') {
+                              d = selectedReceiptBooking.scheduledAt.toDate();
+                            } else if (selectedReceiptBooking.scheduledAt.seconds) {
+                              d = new Date(selectedReceiptBooking.scheduledAt.seconds * 1000);
+                            } else {
+                              d = new Date(selectedReceiptBooking.scheduledAt);
+                            }
+                            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                          } catch (e) {
+                            return String(selectedReceiptBooking.scheduledAt);
+                          }
+                        } else if (selectedReceiptBooking.createdAt) {
+                          try {
+                            let d: Date;
+                            if (typeof selectedReceiptBooking.createdAt.toDate === 'function') {
+                              d = selectedReceiptBooking.createdAt.toDate();
+                            } else if (selectedReceiptBooking.createdAt.seconds) {
+                              d = new Date(selectedReceiptBooking.createdAt.seconds * 1000);
+                            } else {
+                              d = new Date(selectedReceiptBooking.createdAt);
+                            }
+                            return d.toLocaleDateString() + ' (Walk-In)';
+                          } catch (e) {}
+                        }
+                        return 'Walk-In Session';
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Client Name:</span>
+                    <span className="font-extrabold text-slate-900 uppercase">{selectedReceiptBooking.userName || 'Client (Direct Guest)'}</span>
+                  </div>
+                  {selectedReceiptBooking.verificationCode && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400 font-bold uppercase text-[10px]">Security Pin:</span>
+                      <span className="font-bold text-brand-red">{selectedReceiptBooking.verificationCode}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Items and Totals */}
+                <div className="mb-6">
+                  <div className="flex justify-between font-bold text-[10px] text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-300">
+                    <span>Selected Service</span>
+                    <div className="flex gap-8">
+                      <span>QTY</span>
+                      <span>PRICE</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between text-xs py-3.5 border-b border-slate-200">
+                    <span className="font-extrabold text-slate-900 uppercase truncate max-w-[180px]">
+                      {selectedReceiptBooking.serviceName || 'Premium Haircut'}
+                    </span>
+                    <div className="flex gap-11 shrink-0">
+                      <span>1</span>
+                      <span className="font-bold text-slate-900">R{selectedReceiptBooking.totalPaid || 50}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-4">
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span className="font-bold uppercase text-[10px]">Subtotal:</span>
+                      <span>R{selectedReceiptBooking.totalPaid || 50}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span className="font-bold uppercase text-[10px]">Vat (15%):</span>
+                      <span>R0.00</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t border-slate-300">
+                      <span className="uppercase text-[11px] tracking-wider">Grand Total:</span>
+                      <span className="text-[17px] font-sans font-black italic">R{selectedReceiptBooking.totalPaid || 50}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CSS Barcode sequence decoration */}
+                <div className="flex justify-center items-center gap-[1px] h-12 bg-white px-4 py-2 border border-slate-200 my-6">
+                  {[...Array(35)].map((_, i) => {
+                    const widthClass = i % 2 === 0 ? 'w-[1.5px]' : i % 3 === 0 ? 'w-[3px]' : i % 5 === 0 ? 'w-[4px]' : 'w-[1px]';
+                    return (
+                      <div key={i} className={`h-full bg-slate-950 ${widthClass}`} />
+                    );
+                  })}
+                </div>
+
+                {/* Footer Greeting */}
+                <div className="text-center space-y-1.5 text-[9px] text-slate-400">
+                  <p className="font-black text-slate-600 uppercase">Thank you for your valuable support!</p>
+                  <p>Sizabantu Barbershop | Established 2022</p>
+                  <p className="font-mono text-[7px] text-slate-300 mt-2">TRANS-ID: {selectedReceiptBooking.id.toUpperCase()}</p>
+                </div>
+              </div>
+
+              {/* Action utilities - hidden during browser print */}
+              <div className="no-print p-6 bg-slate-100 border-t border-slate-200 flex flex-col gap-2 rounded-b-[2rem]">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadPDF(selectedReceiptBooking)}
+                    className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-red text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download PDF
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReceiptModal(false);
+                    setSelectedReceiptBooking(null);
+                  }}
+                  className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px] py-3.5 rounded-xl transition-all cursor-pointer focus:outline-none"
+                >
+                  Close Receipt
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Login Modal */}
+      <AnimatePresence>
+        {showLoginModal && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2000] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="max-w-md w-full bg-white rounded-[3rem] p-12 text-slate-900 text-center shadow-3xl relative overflow-hidden"
+            >
+              <button 
+                onClick={() => setShowLoginModal(false)}
+                className="absolute top-8 right-8 p-3 bg-slate-50 text-slate-400 hover:text-brand-red rounded-2xl transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              
+              <div className="flex justify-center mb-8">
+                <div className="w-16 h-16 bg-brand-red/10 flex items-center justify-center rounded-2xl p-3">
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-10 h-10 object-contain" alt="Logo" referrerPolicy="no-referrer" />
+                </div>
+              </div>
+              <h3 className="text-2xl font-black uppercase tracking-tight mb-4">Member Entry</h3>
+              <p className="text-slate-400 text-xs font-bold leading-relaxed mb-8">Please sign in to secure your session and earn loyalty stamps.</p>
+              
+              <div className="space-y-4">
+                <AnimatePresence mode="wait">
+                  {authStep === 'methods' && (
+                    <motion.div key="methods" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+                      <button 
+                        onClick={() => setAuthStep('email')}
+                        className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red transition-all flex items-center justify-center gap-3"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Continue with Email
+                      </button>
+                      <button 
+                        onClick={async () => { await loginGoogle(); if (auth.currentUser) setShowLoginModal(false); }}
+                        className="w-full bg-slate-50 border border-slate-100 text-slate-900 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-100 transition-all flex items-center justify-center gap-3"
+                      >
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
+                        Google Login
+                      </button>
+                    </motion.div>
+                  )}
+
+                  {authStep === 'email' && (
+                    <motion.form key="email" onSubmit={requestOTP} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                      <input 
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="name@domain.com"
+                        className="w-full bg-slate-50 border border-slate-100 px-6 py-4 rounded-2xl text-slate-900 font-bold outline-none focus:border-brand-blue"
+                      />
+                      <button type="submit" disabled={isSendingCode} className="w-full bg-brand-red text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px]">
+                        {isSendingCode ? 'Sending...' : 'Send Access Code'}
+                      </button>
+                      <button type="button" onClick={() => setAuthStep('methods')} className="text-[9px] font-black uppercase text-slate-400 underline">Back</button>
+                    </motion.form>
+                  )}
+
+                  {authStep === 'otp' && (
+                    <motion.form key="otp" onSubmit={async (e) => { await verifyOTP(e); if (auth.currentUser) setShowLoginModal(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                      <input 
+                        type="text"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value)}
+                        placeholder="000 000"
+                        className="w-full bg-slate-50 border border-slate-100 px-6 py-4 rounded-2xl text-slate-900 font-black text-2xl text-center tracking-widest outline-none"
+                      />
+                      <button type="submit" className="w-full bg-brand-blue text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px]">Verify & Continue</button>
+                    </motion.form>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Post-Booking Confirmation Modal */}
+      <AnimatePresence>
+        {confirmedBookingDetails && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2000] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="max-w-lg w-full bg-slate-800 border border-white/10 rounded-[3rem] p-10 text-white text-center shadow-3xl relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-15 pointer-events-none"></div>
+              
+              <button 
+                onClick={() => setConfirmedBookingDetails(null)}
+                className="absolute top-8 right-8 p-3 bg-white/5 text-white/40 hover:text-brand-red rounded-2xl transition-all border border-white/5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              
+              <div className="flex justify-center mb-8">
+                <div className="w-16 h-16 bg-brand-red/10 flex items-center justify-center rounded-2xl border border-brand-red/20 shadow-[0_0_20px_rgba(239,68,68,0.2)] p-3">
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-10 h-10 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                </div>
+              </div>
+
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-blue mb-2 block">Reservation Secured</span>
+              <h3 className="text-3xl font-black uppercase tracking-tight mb-8">Booking Confirmed</h3>
+              
+              {/* Summary of user's booking details */}
+              <div className="bg-white/5 border border-white/10 rounded-[2rem] p-6 text-left space-y-6 mb-8 relative">
+                <div className="absolute top-0 right-8 transform -translate-y-1/2 bg-brand-red text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                  Ref: #{confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'LEGACY'}
+                </div>
+
+                {/* Selected Service and description */}
+                <div className="flex justify-between items-start border-b border-white/5 pb-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Service Selected</p>
+                    <p className="text-lg font-black uppercase tracking-tight text-white leading-tight">
+                      {confirmedBookingDetails.serviceName}
+                    </p>
+                    {confirmedBookingDetails.serviceDesc && (
+                      <p className="text-[10px] text-white/50 mt-1">{confirmedBookingDetails.serviceDesc}</p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xl font-black italic text-brand-blue">R{confirmedBookingDetails.servicePrice}</span>
+                  </div>
+                </div>
+
+                {/* Count (quantity), time, and status */}
+                <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Service Count</p>
+                    <p className="font-extrabold text-white">{confirmedBookingDetails.count}x Service</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Booking Status</p>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-500 text-[10px] font-black uppercase tracking-wider mt-0.5">
+                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                      {confirmedBookingDetails.status}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Appointed Time</p>
+                    <div className="flex items-center gap-2 font-extrabold text-white text-base">
+                      {confirmedBookingDetails.type === 'scheduled' ? (
+                        <Calendar className="w-4 h-4 text-brand-blue shrink-0" />
+                      ) : (
+                        <Clock className="w-4 h-4 text-brand-red shrink-0" />
+                      )}
+                      <span>{confirmedBookingDetails.displayTime}</span>
+                    </div>
+                    {confirmedBookingDetails.type === 'queue' && (
+                      <p className="text-[9px] text-white/40 uppercase mt-1.5">
+                        Position: #{confirmedBookingDetails.queuePosition} in queue • Est. Wait: ~{confirmedBookingDetails.estimatedWait} mins
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Dismiss Button */}
+              <div className="space-y-3">
+                <button 
+                  onClick={() => setConfirmedBookingDetails(null)}
+                  className="w-full bg-brand-red text-white py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-red/90 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
+                >
+                  View Live Tracker
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    try {
+                      let eventDate = new Date();
+                      if (confirmedBookingDetails.scheduledAt) {
+                        if (typeof confirmedBookingDetails.scheduledAt.toDate === 'function') {
+                          eventDate = confirmedBookingDetails.scheduledAt.toDate();
+                        } else {
+                          eventDate = new Date(confirmedBookingDetails.scheduledAt);
+                        }
+                      }
+
+                      const formatICSDate = (date: Date) => {
+                        const yyyy = date.getFullYear();
+                        const mm = String(date.getMonth() + 1).padStart(2, '0');
+                        const dd = String(date.getDate()).padStart(2, '0');
+                        const hh = String(date.getHours()).padStart(2, '0');
+                        const min = String(date.getMinutes()).padStart(2, '0');
+                        const ss = String(date.getSeconds()).padStart(2, '0');
+                        return `${yyyy}${mm}${dd}T${hh}${min}${ss}`;
+                      };
+
+                      const escapeText = (text: string) => {
+                        return text
+                          .replace(/\\/g, '\\\\')
+                          .replace(/;/g, '\\;')
+                          .replace(/,/g, '\\,')
+                          .replace(/\n/g, '\\n');
+                      };
+
+                      const startDate = eventDate;
+                      const endDate = new Date(startDate.getTime() + 30 * 60 * 1000); // 30 mins event duration
+
+                      const dtstamp = formatICSDate(new Date());
+                      const dtstart = formatICSDate(startDate);
+                      const dtend = formatICSDate(endDate);
+
+                      const title = `${confirmedBookingDetails.serviceName} - Silverback Barbershop`;
+                      const desc = `Your booking for ${confirmedBookingDetails.serviceName} is confirmed!\\n\\nReference: #${confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'LEGACY'}\\nPrice: R${confirmedBookingDetails.servicePrice || 0}\\nLocation: Klipfontein View Shop`;
+                      const loc = `Klipfontein View Shop, Midrand, South Africa`;
+
+                      const icsLines = [
+                        'BEGIN:VCALENDAR',
+                        'VERSION:2.0',
+                        'PRODID:-//Silverback Barbershop//NONSGML Calendar Event//EN',
+                        'CALSCALE:GREGORIAN',
+                        'METHOD:PUBLISH',
+                        'BEGIN:VEVENT',
+                        `UID:sb-booking-${confirmedBookingDetails.id || Math.random()}@silverbackbarbershop.com`,
+                        `DTSTAMP:${dtstamp}`,
+                        `DTSTART:${dtstart}`,
+                        `DTEND:${dtend}`,
+                        `SUMMARY:${escapeText(title)}`,
+                        `DESCRIPTION:${escapeText(desc)}`,
+                        `LOCATION:${escapeText(loc)}`,
+                        'STATUS:CONFIRMED',
+                        'SEQUENCE:0',
+                        'END:VEVENT',
+                        'END:VCALENDAR'
+                      ];
+
+                      const icsContent = icsLines.join('\r\n');
+                      const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.setAttribute('download', `Silverback_Barber_Booking_${confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'Event'}.ics`);
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                      URL.revokeObjectURL(url);
+                    } catch (e) {
+                      console.error("Error generating ICS file:", e);
+                      alert("Could not generate Calendar Invite. Please try again.");
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 text-white/90 border border-white/5 py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs transition-all active:scale-[0.98]"
+                >
+                  <Calendar className="w-4 h-4 text-brand-blue" />
+                  Add to Calendar (.ics)
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="max-w-7xl mx-auto px-6 relative z-10">
           {/* Main Action Buttons (Front UX) */}
           {bookingFlow === 'none' && !activeBooking && (
-            <div className="flex flex-col md:flex-row gap-6 mb-16">
-              <motion.button 
-                onClick={() => setBookingFlow('queue')} 
-                whileHover={{ y: -5 }}
-                className="flex-1 bg-brand-red text-white p-12 rounded-[3.5rem] shadow-2xl shadow-red-500/30 text-left relative overflow-hidden group"
-              >
-                <div className="relative z-10">
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] mb-4 block opacity-60">Instant Entry</span>
-                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-2">Live <br/> Queue</h3>
-                  <p className="text-white/60 text-xs font-bold font-serif italic">Walk-ins handled by system automation.</p>
-                </div>
-                <Users className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 group-hover:scale-110 transition-transform" />
-              </motion.button>
+            <div className="space-y-12 mb-16">
+              <div className="grid md:grid-cols-2 gap-8">
+                <motion.button 
+                  onClick={() => setBookingFlow('queue')} 
+                  whileHover={{ y: -5, scale: 1.01 }}
+                  className="bg-brand-red text-white p-12 rounded-[3.5rem] shadow-2xl shadow-red-500/20 text-left relative overflow-hidden group border border-brand-red/50"
+                >
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="bg-white/20 p-2 rounded-xl backdrop-blur-md w-9 h-9 flex items-center justify-center">
+                        <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-5 h-5 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-80">Join Live Queue</span>
+                    </div>
+                    <h3 className="text-4xl md:text-5xl font-black uppercase mb-4 leading-none">Walk-In <br/>Now</h3>
+                    <p className="text-white/70 text-xs font-bold font-serif italic mb-8 max-w-[240px]">Perfect for immediate service. Our automated system manages the line.</p>
+                    
+                    <div className="bg-black/20 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+                      <p className="text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">Operating Hours</p>
+                      <div className="flex justify-between items-center text-[10px] font-bold">
+                        <span>Tue - Sun</span>
+                        <span className="text-white/40">|</span>
+                        <span>09:00 - 18:00</span>
+                      </div>
+                      <p className="text-[8px] mt-2 opacity-40 uppercase tracking-widest italic font-serif">Including Public Holidays</p>
+                    </div>
+                  </div>
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="absolute -bottom-12 -right-12 w-64 h-64 opacity-10 group-hover:scale-110 transition-transform duration-700 pointer-events-none object-contain" alt="SB Logo" referrerPolicy="no-referrer" />
+                </motion.button>
 
-              <motion.button 
-                onClick={() => setBookingFlow('scheduled')} 
-                whileHover={{ y: -5 }}
-                className="flex-1 bg-white/5 border border-white/10 p-12 rounded-[3.5rem] text-left relative overflow-hidden group"
-              >
-                <div className="relative z-10">
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] mb-4 block opacity-60">Future Slot</span>
-                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-2">Book <br/> Ahead</h3>
-                  <p className="text-white/40 text-xs font-bold font-serif italic">Pick your time, secure your day.</p>
-                </div>
-                <Calendar className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 group-hover:scale-110 transition-transform" />
-              </motion.button>
+                <motion.button 
+                  onClick={() => setBookingFlow('scheduled')} 
+                  whileHover={{ y: -5, scale: 1.01 }}
+                  className="bg-white/5 border border-white/10 p-12 rounded-[3.5rem] text-left relative overflow-hidden group shadow-2xl shadow-black/40"
+                >
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="bg-brand-blue/20 p-2 rounded-xl backdrop-blur-md border border-brand-blue/30 w-9 h-9 flex items-center justify-center">
+                        <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-5 h-5 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/50">Priority Booking</span>
+                    </div>
+                    <h3 className="text-4xl md:text-5xl font-black uppercase mb-4 leading-none">Avoid <br/>The Line</h3>
+                    <p className="text-white/40 text-xs font-bold font-serif italic mb-8 max-w-[240px]">Secure your specific time slot in advance for zero wait time.</p>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      <div className="bg-white/5 px-4 py-2 rounded-full border border-white/5 text-[9px] font-black uppercase tracking-widest text-brand-blue">No Waiting</div>
+                      <div className="bg-white/5 px-4 py-2 rounded-full border border-white/5 text-[9px] font-black uppercase tracking-widest text-white/40">Guaranteed Slot</div>
+                    </div>
+                  </div>
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="absolute -bottom-12 -right-12 w-64 h-64 opacity-5 group-hover:scale-110 transition-transform duration-700 pointer-events-none object-contain" alt="SB Logo" referrerPolicy="no-referrer" />
+                </motion.button>
+              </div>
             </div>
           )}
 
           <div className="grid lg:grid-cols-2 gap-16 items-start">
             <div className="className">
-              {activeBooking ? (
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/10 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] relative overflow-hidden group shadow-2xl shadow-black/50">
-                <div className="absolute top-0 right-0 p-10">
-                  <QrCode className="w-16 h-16 text-brand-red opacity-60" />
-                </div>
-                <p className="text-brand-red font-black uppercase tracking-widest text-[10px] mb-8">Active Session Code</p>
-                <div className="flex items-center gap-8 mb-12">
-                  <h3 className="text-6xl font-black tracking-tighter text-white">{activeBooking.verificationCode}</h3>
-                  <div className="h-16 w-px bg-white/10"></div>
-                  <div className="text-left">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Status</p>
-                    <p className="text-lg font-black uppercase text-brand-blue">{activeBooking.status.replace('-', ' ')}</p>
-                  </div>
-                </div>
-
-                <div className="p-8 bg-white/5 rounded-[2rem] mb-8 border border-white/10">
-                  <div className="flex items-center gap-4 text-white/80 mb-6 bg-brand-red/10 p-4 rounded-xl border border-brand-red/20">
-                    <AlertCircle className="w-5 h-5 text-brand-red" />
-                    <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">Arrive 10 minutes before session. Late arrivals auto-expire.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-8">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Queue Pos</p>
-                      <p className="text-4xl font-black">{activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) + 1 || '...') : 'STA'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Est. Wait</p>
-                      <p className="text-4xl font-black">~{(activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) * 15) : 0) || 5}m</p>
-                    </div>
-                  </div>
-                </div>
-                <button onClick={() => updateDoc(doc(db, 'bookings', activeBooking.id), { status: 'missed' })} className="text-[9px] font-black uppercase tracking-widest text-white/30 hover:text-brand-red transition-all underline underline-offset-8">Cancel My Spot</button>
-              </motion.div>
-            ) : bookingFlow === 'queue' ? (
-              <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg text-center">
-                <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
-                  <ChevronRight className="w-4 h-4 rotate-180" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
-                </button>
-                <div className="w-20 h-20 bg-brand-red/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Zap className="w-10 h-10 text-brand-red" />
-                </div>
-                <h3 className="text-3xl font-black uppercase tracking-tight">Rapid <span className="text-brand-red">Queue</span> Entry</h3>
-                <p className="text-white/40 text-xs italic font-serif">Instant walk-in. Pay now to lock your current position #{(queue.length + 1)} in line.</p>
-                
-                <div className="space-y-4 text-left">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Select Service</p>
-                  <div className="grid grid-cols-1 gap-3">
-                    {services.map(s => (
-                      <button 
-                        key={s.id} 
-                        onClick={() => setSelectedService(s.id)}
-                        className={`p-6 rounded-2xl border text-left transition-all flex justify-between items-center ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
-                      >
-                        <div>
-                          <p className="font-black text-sm uppercase tracking-tight">{s.name}</p>
-                          <p className="text-[8px] opacity-60">{s.time} process</p>
-                        </div>
-                        <span className="text-lg font-black italic">R{s.price}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-4 border-t border-white/5 mt-8">
-                   <button 
-                    disabled={!selectedService || isProcessingPayment}
-                    onClick={() => createBooking('queue')}
-                    className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl flex items-center justify-center gap-3 active:scale-[0.98]"
-                  >
-                    {isProcessingPayment ? 'Connecting...' : 'Secure My Spot'}
+              {bookingFlow === 'queue' ? (
+                <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg text-center">
+                  <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
                   </button>
-                </div>
-              </motion.div>
-            ) : bookingFlow === 'scheduled' ? (
+                  <div className="w-20 h-20 bg-brand-red/10 rounded-full flex items-center justify-center mx-auto mb-6 p-4">
+                    <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-12 h-12 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                  </div>
+                  <h3 className="text-3xl font-black uppercase tracking-tight">Rapid <span className="text-brand-red">Queue</span> Entry</h3>
+                  <p className="text-white/40 text-xs italic font-serif">Instant walk-in. Pay now to lock your current position #{(queue.length + 1)} in line.</p>
+                  
+                  <div className="space-y-4 text-left">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Select Service</p>
+                    <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+                      {SERVICES.map(s => (
+                        <button 
+                          key={s.id} 
+                          onClick={() => setSelectedService(s.id)}
+                          className={`p-6 rounded-2xl border text-left transition-all flex justify-between items-center ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
+                        >
+                          <div>
+                            <p className="font-black text-sm uppercase tracking-tight">{s.name}</p>
+                            <p className="text-[8px] opacity-60">{s.time} process • {s.desc}</p>
+                          </div>
+                          <span className="text-lg font-black italic">R{s.price}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-white/5 mt-8">
+                     <button 
+                      disabled={!selectedService}
+                      onClick={() => createBooking('queue')}
+                      className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl flex items-center justify-center gap-3 active:scale-[0.98]"
+                    >
+                      Confirm Booking
+                    </button>
+                  </div>
+                </motion.div>
+              ) : bookingFlow === 'scheduled' ? (
+                // We keep scheduled details unchanged, handled below
               <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg">
                 <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
                   <ChevronRight className="w-4 h-4 rotate-180" />
@@ -894,64 +2825,291 @@ const BookingSystem = ({ profile }: { profile: any }) => {
                 
                 <div className="space-y-4">
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/40">1. Select Service</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {services.map(s => (
+                  <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+                    {SERVICES.map(s => (
                       <button 
                         key={s.id} 
                         onClick={() => setSelectedService(s.id)}
                         className={`p-4 rounded-2xl border text-left transition-all ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
                       >
-                        <p className="font-black text-xs uppercase tracking-tight">{s.name}</p>
+                        <p className="font-black text-xs uppercase tracking-tight leading-tight mb-1">{s.name}</p>
                         <p className="text-[8px] opacity-60">R{s.price} • {s.time}</p>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {bookingFlow === 'scheduled' && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/40">2. Select Time (Today Only)</p>
-                    <div className="grid grid-cols-4 gap-2">
-                      {timeSlots.map(t => (
-                        <button 
-                          key={t}
-                          onClick={() => setSelectedTime(t)}
-                          className={`p-3 rounded-xl border text-[10px] font-black transition-all ${selectedTime === t ? 'bg-brand-blue border-brand-blue text-white' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">2. Select Date</p>
+                  <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar">
+                    {nextDates.map(dateObj => (
+                      <button 
+                        key={dateObj.full}
+                        onClick={() => setSelectedDate(dateObj.full)}
+                        className={`min-w-[70px] p-4 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 shrink-0 ${selectedDate === dateObj.full ? 'bg-brand-blue border-brand-blue text-white' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
+                      >
+                        <span className="text-[8px] font-black uppercase tracking-widest opacity-60">{dateObj.day}</span>
+                        <span className="text-xl font-black">{dateObj.date}</span>
+                        {dateObj.isToday && <span className="text-[6px] font-black uppercase tracking-[0.2em] bg-white/20 px-2 py-0.5 rounded-full">Today</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">3. Select Time</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {timeSlots.map(t => (
+                      <button 
+                        key={t}
+                        onClick={() => setSelectedTime(t)}
+                        className={`p-3 rounded-xl border text-[10px] font-black transition-all ${selectedTime === t ? 'bg-brand-blue border-brand-blue text-white' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
 
                 <div className="pt-4 border-t border-white/5 mt-8">
                    <div className="flex justify-between items-center mb-6">
                       <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Grand Total</span>
-                      <span className="text-3xl font-black text-white">R{(services.find(s => s.id === selectedService)?.price || 0)}</span>
+                      <span className="text-3xl font-black text-white">R{(SERVICES.find(s => s.id === selectedService)?.price || 0)}</span>
                    </div>
 
                    <button 
-                    disabled={!selectedService || (bookingFlow === 'scheduled' && !selectedTime) || isProcessingPayment}
+                    disabled={!selectedService || (bookingFlow === 'scheduled' && !selectedTime)}
                     onClick={() => createBooking(bookingFlow as any)}
                     className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl shadow-red-500/20 flex items-center justify-center gap-3 active:scale-[0.98]"
                   >
-                    {isProcessingPayment ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <CreditCard className="w-4 h-4" />
-                        Pay & Confirm Slot
-                      </>
-                    )}
+                    Confirm Booking
                   </button>
-                  <p className="text-[8px] text-white/20 text-center mt-4 uppercase tracking-widest">Secured by Stripe & Google Cloud</p>
                 </div>
               </motion.div>
-            ) : null}
+            ) : (
+              <div className="space-y-8">
+                {activeBooking && (
+                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/10 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] relative overflow-hidden group shadow-2xl shadow-black/50">
+                    <div className="p-8 bg-white/5 rounded-[2rem] mb-8 border border-white/10">
+                      <div className="flex items-center gap-4 text-white/80 mb-6 bg-brand-red/10 p-4 rounded-xl border border-brand-red/20">
+                        <AlertCircle className="w-5 h-5 text-brand-red animate-bounce shrink-0" />
+                        <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">Arrive 10 minutes before session. Late arrivals auto-expire.</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-8 text-left">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Queue Pos</p>
+                          <p className="text-4xl font-black">{activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) + 1 || '...') : 'STA'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Est. Wait</p>
+                          <p className="text-4xl font-black">~{(activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) * 15) : 0) || 5}m</p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-between items-center bg-white/5 border border-white/5 rounded-2xl p-5 mb-8 text-left">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Active Scheduled Service</p>
+                        <p className="font-extrabold uppercase text-white tracking-tight">{activeBooking.serviceName}</p>
+                        <p className="text-[9px] text-white/40 uppercase mt-0.5">{activeBooking.type === 'queue' ? 'Walk-In Spot' : 'Priority Booking'}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-lg font-black italic text-brand-blue">R{activeBooking.totalPaid || 50}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black bg-brand-blue/15 border border-brand-blue/20 text-brand-blue uppercase px-4 py-1.5 rounded-full tracking-wider">
+                        Ref: #{activeBooking.id.slice(0, 5).toUpperCase()}
+                      </span>
+                      <button onClick={() => updateDoc(doc(db, 'bookings', activeBooking.id), { status: 'missed' })} className="text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-brand-red transition-all underline underline-offset-8">Cancel Appointment</button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Booking History & Favorite Services Section */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 25 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="bg-white/5 backdrop-blur-md border border-white/10 rounded-[3rem] p-8 md:p-10 relative overflow-hidden group shadow-2xl shadow-black/40 text-left"
+                >
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                        <History className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xl font-black uppercase tracking-tight">Booking History</h4>
+                        <p className="text-[9px] text-white/40 uppercase tracking-widest mt-0.5 font-bold">Your Past Appointments</p>
+                      </div>
+                    </div>
+                    
+                    {pastBookings.length > 0 && (
+                      <span className="text-[10px] font-black bg-white/10 px-3.5 py-1.5 rounded-full text-white/60 border border-white/5">
+                        {pastBookings.length} Total
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Favorite / Recommended Services Ribbon */}
+                  <div className="mb-8 p-5 bg-white/5 rounded-2xl border border-white/5">
+                    {favoriteServicesList.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-white/50 text-[10px] uppercase font-black tracking-wider">
+                          <Heart className="w-3.5 h-3.5 text-brand-red fill-brand-red animate-pulse shrink-0" />
+                          <span>Your Favorite Services</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {favoriteServicesList.slice(0, 2).map(({ service, count }) => (
+                            <div key={service.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between gap-3 group hover:border-brand-red/30 transition-all">
+                              <div>
+                                  <p className="font-extrabold text-xs uppercase text-white truncate max-w-[120px]">{service.name}</p>
+                                <p className="text-[9px] text-white/40">{count} {count === 1 ? 'visit' : 'visits'}</p>
+                              </div>
+                              <button 
+                                onClick={() => handleQuickRebook(service.id)}
+                                className="px-3 py-1.5 bg-brand-red hover:bg-brand-red/90 text-white font-black uppercase tracking-wider text-[8px] rounded-lg transition-all shadow-md flex items-center gap-1 shrink-0"
+                              >
+                                <Scissors className="w-2.5 h-2.5" />
+                                <span>Rebook</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-white/50 text-[10px] uppercase font-black tracking-wider">
+                          <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 shrink-0" />
+                          <span>Popular Grooming Styles</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {[
+                            SERVICES.find(s => s.id === 'fade'),
+                            SERVICES.find(s => s.id === 'combo1')
+                          ].filter(Boolean).map((service: any) => (
+                            <div key={service.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between gap-3 group hover:border-brand-blue/30 transition-all">
+                              <div>
+                                  <p className="font-extrabold text-xs uppercase text-white truncate max-w-[120px]">{service.name}</p>
+                                <p className="text-[9px] text-white/40">R{service.price} • {service.time}</p>
+                              </div>
+                              <button 
+                                onClick={() => handleQuickRebook(service.id)}
+                                className="px-3 py-1.5 bg-brand-blue/30 hover:bg-brand-blue text-white font-black uppercase tracking-wider text-[8px] rounded-lg transition-all border border-brand-blue/25 flex items-center gap-1 shrink-0"
+                              >
+                                <Calendar className="w-2.5 h-2.5" />
+                                <span>Book</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Booking list */}
+                  <div className="space-y-4 max-h-[360px] overflow-y-auto pr-1 text-left scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                    {pastBookings.length > 0 ? (
+                      pastBookings.map((b) => {
+                        let displayStatus = b.status || 'completed';
+                        const isCancelled = ['missed', 'cancelled'].includes(displayStatus);
+                        
+                        let displayTimeStr = 'Previous Appointment';
+                        if (b.scheduledAt) {
+                          try {
+                            let d: Date;
+                            if (typeof b.scheduledAt.toDate === 'function') {
+                              d = b.scheduledAt.toDate();
+                            } else if (b.scheduledAt.seconds) {
+                              d = new Date(b.scheduledAt.seconds * 1000);
+                            } else {
+                              d = new Date(b.scheduledAt);
+                            }
+                            displayTimeStr = d.toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            });
+                          } catch (e) {
+                            displayTimeStr = String(b.scheduledAt);
+                          }
+                        } else if (b.createdAt) {
+                          try {
+                            let d: Date;
+                            if (typeof b.createdAt.toDate === 'function') {
+                              d = b.createdAt.toDate();
+                            } else if (b.createdAt.seconds) {
+                              d = new Date(b.createdAt.seconds * 1000);
+                            } else {
+                              d = new Date(b.createdAt);
+                            }
+                            displayTimeStr = d.toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric'
+                            }) + ' (Walk-In)';
+                          } catch (e) {}
+                        }
+
+                        return (
+                          <div key={b.id} className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/10 transition-all border-l-2 hover:border-l-brand-blue duration-300">
+                            <div className="flex items-center gap-3.5">
+                              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                                <Scissors className="w-4 h-4 text-white/50" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-extrabold text-sm uppercase tracking-tight text-white">{b.serviceName}</p>
+                                  <span className={`text-[7px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${isCancelled ? 'bg-red-500/15 text-red-400 border border-red-500/10' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/10'}`}>
+                                    {displayStatus === 'missed' ? 'cancelled' : displayStatus}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 text-white/40 text-[10px] mt-0.5">
+                                  <Calendar className="w-3 h-3 text-white/30" />
+                                  <span>{displayTimeStr}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 border-white/5 pt-3.5 sm:pt-0 shrink-0">
+                              <span className="text-sm font-black italic text-white/70">R{b.totalPaid || 50}</span>
+                              
+                              {!isCancelled && (
+                                <button 
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedReceiptBooking(b);
+                                    setShowReceiptModal(true);
+                                  }}
+                                  className="px-4 py-2 bg-white/5 hover:bg-brand-blue hover:text-white hover:border-brand-blue text-slate-300 font-bold uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 flex items-center gap-1 shadow-md cursor-pointer"
+                                >
+                                  <Printer className="w-2.5 h-2.5" />
+                                  <span>Receipt</span>
+                                </button>
+                              )}
+
+                              <button 
+                                onClick={() => handleQuickRebook(b.serviceId || 'fade')}
+                                className="px-4 py-2 bg-white/5 hover:bg-brand-red hover:text-white hover:border-brand-red text-slate-300 font-bold uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 flex items-center gap-1 shadow-md"
+                              >
+                                <Scissors className="w-2.5 h-2.5" />
+                                <span>Rebook</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="py-12 text-center border border-dashed border-white/10 rounded-2xl flex flex-col items-center">
+                        <History className="w-8 h-8 text-white/10 mb-3" />
+                        <p className="text-white/30 font-black uppercase tracking-widest text-[9px] mb-1">No Past Bookings</p>
+                        <p className="text-white/25 text-[10px] max-w-[200px]">Book your first service and start earning loyalty cuts!</p>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+            )}
           </div>
 
           <div className="relative">
@@ -989,7 +3147,7 @@ const BookingSystem = ({ profile }: { profile: any }) => {
                   </motion.div>
                 )) : (
                   <div className="py-24 text-center border-2 border-dashed border-white/10 rounded-[2rem] flex flex-col items-center">
-                    <Users className="w-16 h-16 text-white/5 mb-6" />
+                    <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="w-16 h-16 object-contain opacity-20 mb-6" alt="Logo" referrerPolicy="no-referrer" />
                     <p className="text-white/20 font-black uppercase tracking-[0.4em] text-[10px]">Queue Standby</p>
                   </div>
                 )}
@@ -1039,6 +3197,16 @@ const BookingSystem = ({ profile }: { profile: any }) => {
                   {profile?.stamps >= 10 ? <CheckCircle2 className="w-3 h-3 text-brand-blue" /> : <div className="w-3 h-3 border border-slate-200 rounded-full" />}
                 </div>
               </div>
+
+              {profile && (
+                <button 
+                  onClick={() => setShowQRModal(true)}
+                  className="w-full mt-4 flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-brand-red text-white font-black uppercase tracking-widest text-[8px] rounded-2xl transition-all shadow-md active:scale-[0.98]"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-white animate-pulse" />
+                  <span>Show Check-In QR</span>
+                </button>
+              )}
             </motion.div>
           </div>
         </div>
@@ -1052,12 +3220,24 @@ const BookingSystem = ({ profile }: { profile: any }) => {
 const WelcomeJourney = () => {
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
+  const [emailError, setEmailError] = useState('');
+
+  const handleSubscribe = (e: React.FormEvent) => {
+    e.preventDefault();
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!re.test(email)) {
+      setEmailError('Invalid email');
+      return;
+    }
+    setEmailError('');
+    setSubscribed(true);
+  };
 
   return (
     <section className="py-32 bg-white relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-6">
         <div className="bg-slate-900 rounded-[4rem] p-12 md:p-24 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-16">
-          <div className="absolute top-0 right-0 w-1/2 h-full bg-[url('https://images.unsplash.com/photo-1503951914875-452162b0f3f1?q=80&w=2070&auto=format&fit=crop')] bg-cover opacity-20 hidden md:block"></div>
+          <div className="absolute top-0 right-0 w-1/2 h-full bg-[url('https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.50.02_bgba6b.jpg')] bg-cover opacity-20 hidden md:block"></div>
           <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-transparent to-slate-900 z-10 hidden md:block"></div>
           
           <div className="relative z-20 max-w-xl">
@@ -1070,34 +3250,65 @@ const WelcomeJourney = () => {
             </p>
 
             {subscribed ? (
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="p-8 bg-brand-red rounded-3xl text-white text-center">
-                <p className="font-black uppercase tracking-widest text-xs mb-2">Check Your Inbox!</p>
-                <p className="text-sm font-bold opacity-80 italic font-serif">Welcome to the Sizabantu family.</p>
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="p-8 bg-brand-red rounded-3xl text-white text-center relative overflow-hidden">
+                <motion.div 
+                  animate={{ opacity: [0.1, 0.3, 0.1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="absolute inset-0 bg-white"
+                />
+                <div className="relative z-10">
+                  <p className="font-black uppercase tracking-widest text-xs mb-2">Check Your Inbox!</p>
+                  <p className="text-sm font-bold opacity-80 italic font-serif">Welcome to the Sizabantu family.</p>
+                </div>
               </motion.div>
             ) : (
-              <form onSubmit={(e) => { e.preventDefault(); setSubscribed(true); }} className="flex flex-col sm:flex-row gap-4">
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your@email.com"
-                  required
-                  className="flex-1 bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-white font-bold outline-none focus:border-brand-blue transition-all"
-                />
-                <button type="submit" className="bg-white text-slate-900 px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red hover:text-white transition-all shadow-2xl">
-                  Sign Me Up
+              <form onSubmit={handleSubscribe} className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1 relative">
+                  <input 
+                    type="email" 
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (emailError) setEmailError('');
+                    }}
+                    placeholder="your@email.com"
+                    required
+                    className={`w-full bg-white/5 border ${emailError ? 'border-brand-red' : 'border-white/10'} px-8 py-5 rounded-2xl text-white font-bold outline-none focus:border-brand-blue transition-all`}
+                  />
+                  {emailError && (
+                    <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute -bottom-6 left-4 text-[10px] text-brand-red font-black uppercase tracking-widest">{emailError}</motion.p>
+                  )}
+                </div>
+                <button type="submit" className="bg-white text-slate-900 px-6 py-2.5 rounded-2xl font-black uppercase tracking-widest text-[8px] hover:bg-brand-red hover:text-white transition-all shadow-xl relative overflow-hidden shrink-0 h-fit">
+                  <span className="relative z-10">Sign Me Up</span>
+                  <motion.div 
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                    className="absolute -top-full -left-full w-[300%] h-[300%] bg-[conic-gradient(from_0deg,transparent_0deg,transparent_300deg,rgba(59,130,246,0.1)_360deg)]"
+                  />
                 </button>
               </form>
             )}
           </div>
 
           <div className="relative z-20 flex-shrink-0">
-             <div className="w-56 h-56 bg-brand-red rounded-[3rem] rotate-6 border-8 border-white/10 shadow-2xl overflow-hidden">
-                <img src="https://images.unsplash.com/photo-1599351431247-f579338421f0?q=80&w=2000&auto=format&fit=crop" className="w-full h-full object-cover grayscale" alt="Welcome" />
-             </div>
-             <div className="absolute -top-4 -left-4 w-24 h-24 bg-brand-blue rounded-3xl -rotate-12 border-4 border-slate-900 flex items-center justify-center p-4">
+             <motion.div 
+              animate={{ rotate: 6 }}
+              whileHover={{ rotate: 0, scale: 1.05 }}
+              className="w-56 h-56 bg-brand-red rounded-[3rem] border-8 border-white/10 shadow-2xl overflow-hidden"
+             >
+                <img src="https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.24.26_oeviud.jpg" className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-700" alt="Welcome" />
+             </motion.div>
+             <motion.div 
+              animate={{ 
+                rotate: [-12, -8, -12],
+                y: [0, -5, 0]
+              }}
+              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              className="absolute -top-4 -left-4 w-24 h-24 bg-brand-blue rounded-3xl border-4 border-slate-900 flex items-center justify-center p-4 shadow-xl"
+             >
                 <Scissors className="w-10 h-10 text-white" />
-             </div>
+             </motion.div>
           </div>
         </div>
       </div>
@@ -1164,8 +3375,8 @@ const TopNav = () => {
                 </div>
                 <span className="text-[7px] font-black uppercase tracking-[0.3em] text-brand-red">{profile.stamps || 0}/10 Stamps</span>
               </div>
-              <button onClick={logout} className="p-3 bg-slate-50 text-slate-400 hover:text-brand-red hover:bg-brand-red/5 rounded-2xl transition-all">
-                <LogOut className="w-4 h-4" />
+              <button onClick={logout} className="p-2.5 bg-slate-50 text-slate-400 hover:text-brand-red hover:bg-brand-red/5 rounded-2xl transition-all">
+                <LogOut className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
@@ -1173,7 +3384,7 @@ const TopNav = () => {
               onClick={handleLoginClick}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className="bg-slate-900 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-200/50 transition-all flex items-center gap-2 group"
+              className="bg-slate-900 text-white px-6 py-2.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-200/50 transition-all flex items-center gap-2 group"
             >
               <User className="w-3 h-3 group-hover:rotate-12 transition-transform" />
               Member Login
@@ -1182,18 +3393,33 @@ const TopNav = () => {
         </div>
 
         {/* Mobile Header Elements */}
-        <div className="flex md:hidden items-center gap-4">
-          {!profile && (
-            <button onClick={handleLoginClick} className="p-2 text-slate-900">
-              <User className="w-5 h-5" />
-            </button>
+        <div className="flex md:hidden items-center gap-2">
+          {profile ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] font-black uppercase tracking-tight text-slate-900 leading-none">{profile.displayName?.split(' ')[0]}</span>
+                <span className="text-[7px] font-black text-brand-red leading-none mt-0.5">{profile.stamps || 0} Stamps</span>
+              </div>
+              <button 
+                onClick={() => setIsOpen(true)}
+                className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center transition-all active:scale-95"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button onClick={handleLoginClick} className="w-10 h-10 bg-slate-50 text-slate-900 rounded-xl flex items-center justify-center border border-slate-100 active:scale-95">
+                <User className="w-5 h-5" />
+              </button>
+              <button 
+                onClick={() => setIsOpen(true)}
+                className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center transition-all active:scale-95"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            </div>
           )}
-          <button 
-            onClick={() => setIsOpen(true)}
-            className="p-2 text-slate-900"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
         </div>
       </div>
 
@@ -1215,15 +3441,13 @@ const TopNav = () => {
               transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
               className="absolute top-0 right-0 h-full w-4/5 max-w-sm bg-white shadow-[-20px_0_60px_-15px_rgba(0,0,0,0.3)] p-8 flex flex-col pointer-events-auto"
             >
-              <div className="flex justify-between items-center mb-16">
-                <img 
-                  src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" 
-                  alt="Logo" 
-                  className="h-10 object-contain"
-                  referrerPolicy="no-referrer"
-                />
-                <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors">
-                  <X className="w-6 h-6 text-slate-900" />
+              <div className="flex justify-between items-center mb-16 px-2">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] text-brand-red">Express</span>
+                  <span className="text-2xl font-black uppercase tracking-tighter text-slate-900">Navigation</span>
+                </div>
+                <button onClick={() => setIsOpen(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-colors">
+                  <X className="w-5 h-5 text-slate-900" />
                 </button>
               </div>
 
@@ -1243,6 +3467,19 @@ const TopNav = () => {
                   </motion.a>
                 ))}
               </div>
+
+              {profile && (
+                 <motion.button
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  onClick={() => { logout(); setIsOpen(false); }}
+                  className="mt-8 flex items-center gap-3 w-full p-6 bg-slate-50 rounded-[2rem] border border-slate-100 text-slate-400 font-black uppercase text-[10px] tracking-widest hover:bg-brand-red/5 hover:text-brand-red transition-all"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout Account
+                </motion.button>
+              )}
 
               <div className="mt-auto pt-10 border-t border-slate-100">
                 <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 mb-8 text-center md:text-left">Let's Connect</p>
@@ -1307,7 +3544,7 @@ const BackToTop = () => {
   );
 };
 
-const LiveStatus = () => {
+const LiveStatus = ({ centered = false }: { centered?: boolean }) => {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -1322,6 +3559,35 @@ const LiveStatus = () => {
     if (day === 1) return false; // Monday Closed
     return hour >= 9 && hour < 18; // 09:00 - 18:00
   };
+
+  if (centered) {
+    return (
+      <div className="flex flex-col items-center justify-center mt-16 text-center">
+        <div className="flex items-center gap-2 mb-2 bg-slate-950/45 px-3 py-1 rounded-full border border-white/5 backdrop-blur-sm">
+          <span className={`relative flex h-2 w-2 ${isOpen() ? 'text-emerald-500' : 'text-brand-red'}`}>
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOpen() ? 'bg-emerald-400' : 'bg-brand-red/40'}`}></span>
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${isOpen() ? 'bg-emerald-500' : 'bg-brand-red'}`}></span>
+          </span>
+          <p className={`text-[9px] font-black uppercase tracking-[0.2em] ${isOpen() ? 'text-emerald-500 font-bold' : 'text-brand-red font-bold'}`}>
+            {isOpen() ? 'Open Now' : 'Closed Now'}
+          </p>
+        </div>
+        <p className="text-3xl md:text-4xl font-black text-white tracking-tighter tabular-nums leading-none">
+          {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+        </p>
+        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.4em] mt-3">
+          {time.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
+        </p>
+        
+        {/* Operating Hours info nicely aligned */}
+        <div className="mt-4 flex flex-col sm:flex-row items-center gap-1 sm:gap-3 text-[9px] text-white/30 tracking-[0.2em] uppercase font-bold bg-slate-950/10 px-4 py-2 rounded-lg border border-white/5">
+          <span>TUE - SUN: 09:00 - 18:00</span>
+          <span className="hidden sm:inline text-white/10">•</span>
+          <span className="text-brand-red/80">MON: CLOSED</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="absolute bottom-10 right-10 text-right">
@@ -1345,38 +3611,75 @@ const LiveStatus = () => {
 };
 
 const Hero = () => {
-  return (
-    <section className="relative h-[80vh] md:h-[90vh] flex items-end bg-slate-900 overflow-hidden pb-20">
-      {/* Video Background */}
-      <div className="absolute inset-0 z-0">
-        <video 
-          autoPlay 
-          loop 
-          muted 
-          playsInline
-          className="w-full h-full object-cover opacity-40"
-        >
-          <source src="https://cdn.coverr.co/videos/preview/720p/coverr-barber-cutting-hair-5426.mp4" type="video/mp4" />
-        </video>
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/60 to-slate-900/20"></div>
-      </div>
+  const { scrollY } = useScroll();
+  const y1 = useTransform(scrollY, [0, 500], [0, 200]);
+  const opacity = useTransform(scrollY, [0, 300], [1, 0]);
 
-      <div className="max-w-7xl mx-auto px-6 relative z-10 w-full">
+  return (
+    <section className="relative min-h-screen bg-slate-900 flex items-center justify-center overflow-hidden pt-20">
+      {/* Background Video with Parallax and technical overlay */}
+      <motion.div 
+        style={{ y: y1, opacity }}
+        className="absolute inset-0 z-0"
+      >
+        <img 
+          src="https://res.cloudinary.com/dk8jbgjhl/image/upload/v1777916389/WhatsApp_Image_2026-04-22_at_21.13.26_t3c8ji.jpg"
+          alt="Hero Background"
+          className="w-full h-full object-cover scale-110 grayscale-[60%] opacity-50"
+          referrerPolicy="no-referrer"
+        />
+        <div className="absolute inset-0 bg-slate-900/15 backdrop-blur-[1px]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-900/20 via-60% to-slate-900"></div>
+        {/* Dynamic mesh pattern */}
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30"></div>
+      </motion.div>
+
+      <div className="max-w-7xl mx-auto px-6 relative z-10 w-full text-center mt-36 md:mt-48">
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="max-w-4xl"
+           initial={{ opacity: 0, y: 30 }}
+           animate={{ opacity: 1, y: 0 }}
+           transition={{ duration: 1, ease: "easeOut" }}
+           className="flex flex-col items-center"
         >
-          <p className="text-white/60 text-[10px] md:text-xs font-bold tracking-[0.4em] uppercase max-w-xl">
-            The pinnacle of grooming where tradition meets modern precision.
-          </p>
+          <div className="flex flex-col sm:flex-row gap-4 mt-20 justify-center items-center">
+            <motion.a 
+              href="#book"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="bg-brand-red text-white px-8 py-3.5 rounded-full font-bold uppercase tracking-[0.2em] text-[11px] text-center shadow-lg relative overflow-hidden group min-w-[200px] flex items-center justify-center"
+            >
+              <div className="relative z-10 flex items-center justify-center gap-2">
+                <Zap className="w-3.5 h-3.5 fill-white text-white" />
+                <span>Quick Book Now</span>
+              </div>
+              <motion.div 
+                animate={{ x: ["-100%", "100%"] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12"
+              />
+            </motion.a>
+
+            <motion.a 
+              href="#pricing"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="bg-white/5 backdrop-blur-md border border-white/10 text-white px-8 py-3.5 rounded-full font-bold uppercase tracking-[0.2em] text-[11px] text-center hover:bg-white/10 transition-all relative group min-w-[200px] flex items-center justify-center"
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span>View All Services</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </motion.a>
+          </div>
+
+          <LiveStatus centered={true} />
         </motion.div>
       </div>
 
-      {/* Live Status on the frame */}
-      <div className="hidden md:block">
-        <LiveStatus />
+      {/* Decorative Elements */}
+      <div className="absolute bottom-12 left-6 z-20 hidden lg:flex items-center gap-6 text-white">
+        <div className="w-12 h-px bg-white/20"></div>
+        <p className="text-[10px] font-black uppercase tracking-widest text-white/20">Based in Gauteng, South Africa</p>
       </div>
     </section>
   );
@@ -1391,7 +3694,7 @@ const Mission = () => {
           <img 
             src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" 
             alt="SB Logo" 
-            className="h-28 md:h-40 object-contain drop-shadow-xl"
+            className="h-24 md:h-32 object-contain drop-shadow-xl"
             referrerPolicy="no-referrer"
           />
         </div>
@@ -1404,15 +3707,6 @@ const Mission = () => {
           <p className="text-3xl md:text-5xl font-light italic font-serif leading-relaxed text-slate-700 mb-16">
             "Our mission is to provide exceptional grooming experience by delivering superior service, building long lasting relationships and fostering a welcoming environment for people of all ages."
           </p>
-          <div className="flex flex-col items-center">
-            <div className="h-px w-24 bg-brand-red mb-6"></div>
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-brand-blue">
-              Thobane Nlhapo
-            </p>
-            <p className="text-[10px] font-light italic font-serif text-slate-400 uppercase tracking-[0.4em] mt-2">
-              Founder
-            </p>
-          </div>
         </motion.div>
       </div>
     </section>
@@ -1420,117 +3714,259 @@ const Mission = () => {
 };
 
 const HaircutPricing = () => {
-  const prices = [
-    // HAIRSTYLES
-    { name: "Fade", price: "R50", desc: "Precision blending", id: "01" },
-    { name: "Brush", price: "R35", desc: "Classic brush cut", id: "02" },
-    { name: "Chiskop", price: "R30", desc: "Clean bald cut", id: "03" },
-    { name: "Razor Blade", price: "R60", desc: "Traditional razor finish", id: "04" },
-    
-    // OTHER
-    { name: "Line Up", price: "R15", desc: "Edge definition", id: "05" },
-    { name: "Beard Shave", price: "R15", desc: "Facial grooming", id: "06" },
-    { name: "Custom Design", price: "R15", desc: "Artistic patterns", id: "07" },
-    { name: "Wave Maintenance", price: "R30", desc: "Wave care", id: "08" },
-    { name: "Waving", price: "R60", desc: "Professional waving", id: "09" },
-    { name: "Wash - Long Hair", price: "R50", desc: "Deep cleansing", id: "10" },
-    { name: "Eyebrow & Tint", price: "R50", desc: "Brow shaping", id: "11" },
-    
-    // COMBO PACKAGES
-    { name: "Fade & Shave", price: "R60", desc: "Full cut & beard", id: "12" },
-    { name: "Fade & Graphic", price: "R60", desc: "Cut & design", id: "13" },
-    { name: "Fade & Wash", price: "R75", desc: "Cut & wash", id: "14" },
-    { name: "Cut & Edge", price: "R75", desc: "Precision cut", id: "15" },
-    { name: "Cut & Permanent", price: "R110", desc: "Style finish", id: "16" },
+  const [selectedCategory, setSelectedCategory] = useState<'All' | 'Men' | 'Ladies' | 'Kiddies'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeLocalService, setActiveLocalService] = useState<string>('');
+
+  useEffect(() => {
+    const handleSyncGlobal = (e: any) => {
+      const { serviceId } = e.detail || {};
+      if (serviceId) {
+        setActiveLocalService(serviceId);
+      }
+    };
+    window.addEventListener('select-service', handleSyncGlobal);
+    return () => window.removeEventListener('select-service', handleSyncGlobal);
+  }, []);
+
+  const categories = [
+    { id: 'All', name: 'All' },
+    { id: 'Men', name: 'Mens Styles' },
+    { id: 'Ladies', name: 'Ladies Styles' },
+    { id: 'Kiddies', name: 'Kids Styles' }
   ];
 
+  const filteredServices = SERVICES.filter(s => {
+    const matchesCategory = selectedCategory === 'All' || s.category === selectedCategory;
+    const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          s.desc.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
+
+  const handleSelectCard = (serviceId: string) => {
+    setActiveLocalService(serviceId);
+    window.dispatchEvent(new CustomEvent('select-service', { detail: { serviceId } }));
+  };
+
   return (
-    <section id="pricing" className="bg-slate-50 text-slate-900 py-20 md:py-32 scroll-mt-10">
-      <div className="max-w-7xl mx-auto px-6">
-        {/* Interactive Frame Banner */}
+    <section id="pricing" className="bg-slate-50 text-slate-900 py-20 md:py-32 scroll-mt-10 overflow-hidden relative">
+      {/* Decorative ambient elements */}
+      <div className="absolute top-1/4 left-0 w-96 h-96 bg-brand-blue/5 rounded-full blur-[100px] pointer-events-none"></div>
+      <div className="absolute bottom-1/4 right-0 w-96 h-96 bg-brand-red/5 rounded-full blur-[100px] pointer-events-none"></div>
+
+      <div className="max-w-7xl mx-auto px-6 relative z-10">
+        {/* Banner with visual context */}
         <motion.div 
-          whileHover={{ y: -5 }}
-          className="w-full h-40 md:h-80 relative overflow-hidden rounded-[2rem] md:rounded-[3rem] mb-12 md:mb-20 group shadow-2xl shadow-slate-200"
+          whileHover={{ y: -4 }}
+          className="w-full h-44 md:h-80 relative overflow-hidden rounded-[2rem] md:rounded-[3.2rem] mb-12 md:mb-16 group shadow-2xl shadow-slate-200/50"
         >
           <motion.div 
-            initial={{ scale: 1.1 }}
+            initial={{ scale: 1.08 }}
             whileInView={{ scale: 1 }}
-            transition={{ duration: 1.5, ease: "easeOut" }}
+            transition={{ duration: 1.2, ease: "easeOut" }}
             className="absolute inset-0 z-0"
           >
             <img 
-              src="https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=2000" 
+              src="https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.50.03_kwvaiv.jpg" 
               alt="Barbershop Background" 
-              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-103"
               referrerPolicy="no-referrer"
             />
             <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-[2px]"></div>
             <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
           </motion.div>
           
-          <div className="absolute inset-0 z-10 flex flex-col justify-center items-center p-8 md:p-16 text-center">
-            <div className="flex flex-col md:flex-row justify-between items-center md:items-end gap-6 w-full">
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="w-full"
-              >
-                <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-4 block">Service Menu</span>
-                <h2 className="text-4xl md:text-7xl font-black uppercase tracking-tighter text-white leading-none">
-                  HAIR<span className="text-brand-blue italic font-serif lowercase tracking-normal">CUTS</span>
-                </h2>
-              </motion.div>
-            </div>
+          <div className="absolute inset-0 z-10 flex flex-col justify-end p-6 md:p-16">
+            <span className="text-brand-red font-black uppercase tracking-[0.35em] text-[10px] md:text-sm mb-2 md:mb-3 block">Premium Offerings</span>
+            <h2 className="text-3xl md:text-6xl font-black uppercase tracking-tighter text-white leading-none">
+              SERVICE <span className="text-brand-blue italic font-serif lowercase tracking-normal">MENU</span>
+            </h2>
+            <p className="text-slate-300 text-[10px] md:text-sm font-medium tracking-wide mt-2 max-w-xl hidden sm:block">
+              Select any specialty cut or styling treatment below to immediately load it into your live booking workflow.
+            </p>
           </div>
         </motion.div>
 
-        {/* Minimized Haircut Offerings in 1 Balanced Frame */}
-        <div className="max-w-5xl mx-auto">
-          <div className="bg-white rounded-[2rem] md:rounded-[3rem] p-8 md:p-16 border border-slate-100 shadow-xl relative overflow-hidden group">
-            <div className="relative z-10">
-              <div className="flex items-center gap-4 mb-12">
-                <div className="h-px flex-1 bg-slate-100"></div>
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Master Barber Menu</p>
-                <div className="h-px flex-1 bg-slate-100"></div>
-              </div>
-
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-8">
-                {prices.map((item, idx) => (
-                  <motion.div 
-                    key={idx}
-                    initial={{ opacity: 0, y: 10 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.02 }}
-                    whileHover={{ x: 5 }}
-                    className="flex justify-between items-end border-b border-slate-50 pb-4 group/item cursor-default"
+        {/* Categories Navigation and Search Panel */}
+        <div className="max-w-6xl mx-auto mb-12">
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-6 bg-white p-4 rounded-3xl border border-slate-100 shadow-xl shadow-slate-100/50">
+            {/* Horizontal Scroll Pill Filters */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 lg:pb-0 w-full lg:w-auto scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none]">
+              {categories.map((cat) => {
+                const isSelected = selectedCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id as any)}
+                    className={`px-4 py-2.5 rounded-full text-xs font-bold tracking-tight transition-all duration-200 shrink-0 select-none ${
+                      isSelected 
+                        ? 'bg-slate-900 text-white shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/50'
+                    }`}
                   >
-                    <div>
-                      <h3 className="text-sm font-black uppercase tracking-tight group-hover/item:text-brand-red transition-colors">
-                        {item.name}
-                      </h3>
-                      <p className="text-[10px] text-slate-400 font-medium">{item.desc}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xl font-black font-mono text-brand-red">{item.price}</span>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                    {cat.name}
+                  </button>
+                );
+              })}
+            </div>
 
-              <div className="mt-16 pt-8 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                  Precision grooming for <span className="text-brand-blue italic font-serif lowercase tracking-normal">everyone</span>
-                </p>
-                <a 
-                  href="https://wa.me/27607246829"
-                  className="flex items-center gap-3 bg-brand-red text-white px-8 py-4 rounded-full text-[10px] font-black uppercase tracking-[0.2em] hover:bg-brand-dark transition-all shadow-lg shadow-red-100"
+            {/* Interactive Search Box */}
+            <div className="relative w-full lg:w-80">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+                <Search className="h-4 w-4 text-slate-400" />
+              </span>
+              <input
+                type="text"
+                placeholder="Search haircuts, relaxers, treatments..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-100 text-slate-900 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold focus:outline-none focus:bg-white focus:border-brand-blue focus:ring-1 focus:ring-brand-blue/10 transition-all placeholder:text-slate-400"
+              />
+              {searchQuery && (
+                <button 
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-slate-900 text-xs font-bold"
                 >
-                  Enquire on WhatsApp
-                </a>
-              </div>
+                  Clear
+                </button>
+              )}
             </div>
           </div>
+        </div>
+
+        {/* Dynamic Services Bento Grid */}
+        <div className="max-w-6xl mx-auto">
+          <AnimatePresence mode="popLayout">
+            {filteredServices.length > 0 ? (
+              <motion.div 
+                layout
+                className="grid md:grid-cols-2 lg:grid-cols-3 gap-6"
+              >
+                {filteredServices.map((item) => {
+                  const isActive = activeLocalService === item.id;
+                  const isLadies = item.category === 'Ladies';
+                  const isKiddies = item.category === 'Kiddies';
+                  
+                  const categoryBadgeColor = isLadies 
+                    ? 'bg-purple-50 text-purple-600 border-purple-200/20' 
+                    : isKiddies 
+                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200/20' 
+                    : 'bg-blue-50 text-brand-blue border-blue-200/20';
+
+                  return (
+                    <motion.div
+                      layout
+                      key={item.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      whileHover={{ y: -6, transition: { duration: 0.2 } }}
+                      onClick={() => handleSelectCard(item.id)}
+                      className={`relative bg-white rounded-3xl p-6 border transition-all duration-300 cursor-pointer overflow-hidden flex flex-col justify-between group ${
+                        isActive 
+                          ? 'border-brand-blue ring-2 ring-brand-blue/10 shadow-2xl shadow-brand-blue/10' 
+                          : 'border-slate-100 hover:border-slate-200 shadow-lg shadow-slate-100/30'
+                      }`}
+                    >
+                      {/* Active indicator bar */}
+                      {isActive && (
+                        <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-brand-red via-brand-blue to-emerald-400"></div>
+                      )}
+
+                      <div>
+                        {/* Header metadata */}
+                        <div className="flex items-center justify-between gap-2 mb-4">
+                          <span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${categoryBadgeColor}`}>
+                            {item.category}
+                          </span>
+                          
+                          <div className="flex items-center gap-1.5 text-slate-400">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span className="text-[10px] font-bold font-mono">{item.time}</span>
+                          </div>
+                        </div>
+
+                        {/* Title and description */}
+                        <h3 className="text-base font-black uppercase tracking-tight text-slate-900 group-hover:text-brand-red transition-colors mb-2.5">
+                          {item.name}
+                        </h3>
+                        <p className="text-xs text-slate-500 line-clamp-2 mb-6 font-medium leading-relaxed">
+                          {item.desc || "Standard high-quality specialty hair grooming and design."}
+                        </p>
+                      </div>
+
+                      {/* Footer actions with price */}
+                      <div className="pt-4 border-t border-slate-50 flex items-center justify-between mt-auto">
+                        <div>
+                          <span className="text-[9px] font-black text-slate-400 block uppercase tracking-wider">Price</span>
+                          <span className="text-2xl font-black font-mono text-slate-900">
+                            R{item.price}
+                          </span>
+                        </div>
+
+                        <div className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-bold uppercase text-[9px] tracking-widest transition-all ${
+                          isActive 
+                            ? 'bg-brand-blue text-white shadow-md' 
+                            : 'bg-slate-50 text-slate-500 group-hover:bg-slate-900 group-hover:text-white group-hover:shadow-lg'
+                        }`}>
+                          {isActive ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Selected</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Book Now</span>
+                              <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </motion.div>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-center py-20 bg-white rounded-[2rem] border border-slate-100 shadow-xl"
+              >
+                <HelpCircle className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+                <h3 className="text-lg font-black uppercase text-slate-800 tracking-tight">No services found</h3>
+                <p className="text-slate-400 text-xs mt-1 max-w-sm mx-auto">
+                  We couldn't find items matching "{searchQuery}". Try using other keywords.
+                </p>
+                <button
+                  onClick={() => { setSearchQuery(''); setSelectedCategory('All'); }}
+                  className="mt-6 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Reset filters
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Quick Help & Extra Action */}
+        <div className="max-w-6xl mx-auto mt-16 pt-8 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="text-center md:text-left">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">
+              Custom styling demands or color mixes?
+            </p>
+            <p className="text-xs text-slate-500 font-medium">
+              We personalize washes, tones, and bleach styles to fit your unique look.
+            </p>
+          </div>
+          <a 
+            href="https://wa.me/27607246829"
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 bg-white border border-slate-200 hover:border-brand-blue text-slate-700 px-6 py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-[0.2em] hover:shadow-xl hover:shadow-blue-500/5 transition-all shrink-0"
+          >
+            <span>Consult VIP Styles on WhatsApp</span>
+            <ArrowRight className="w-3.5 h-3.5 text-brand-blue" />
+          </a>
         </div>
       </div>
     </section>
@@ -1538,20 +3974,117 @@ const HaircutPricing = () => {
 };
 
 
+// --- Lazy Loading Image Component ---
+const LazyImage = ({ 
+  src, 
+  alt, 
+  className,
+  referrerPolicy = "no-referrer"
+}: { 
+  src: string; 
+  alt: string; 
+  className?: string; 
+  referrerPolicy?: React.HTMLAttributeReferrerPolicy;
+}) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const imgRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "120px" } // Load slightly before coming into view
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={imgRef} className="relative w-full h-full overflow-hidden bg-slate-50">
+      {/* Skeleton Shimmer */}
+      {!isLoaded && (
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-50 via-slate-100 to-slate-50 animate-pulse flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-brand-red/20 border-t-brand-red animate-spin" />
+        </div>
+      )}
+      
+      {isInView ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          onLoad={() => setIsLoaded(true)}
+          className={`w-full h-full object-cover transition-all duration-1000 ease-out ${
+            isLoaded ? "opacity-100" : "opacity-0 scale-95"
+          } ${className || ""}`}
+          referrerPolicy={referrerPolicy}
+        />
+      ) : (
+        <div className="w-full h-full opacity-0" />
+      )}
+    </div>
+  );
+};
+
+
 // --- Portfolio Component (Enhanced Gallery) ---
 
 const Portfolio = () => {
+  const [showGallery, setShowGallery] = useState(false);
+  const [selectedGalleryImg, setSelectedGalleryImg] = useState<string | null>(null);
+
   const images = [
     { url: "https://res.cloudinary.com/dggitwduo/image/upload/v1776183249/WhatsApp_Image_2026-04-14_at_11.14.44_1_aqb6zl.jpg", title: "Signature Fade", size: "large", category: "Master Selection" },
-    { url: "https://images.unsplash.com/photo-1599351431247-f10b21ce9630?auto=format&fit=crop&q=80&w=1000", title: "Beard Sculpt", size: "small", category: "Grooming" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916394/WhatsApp_Image_2026-04-22_at_14.37.03_inompp.jpg", title: "Beard Sculpt", size: "small", category: "Grooming" },
     { url: "https://res.cloudinary.com/dggitwduo/image/upload/v1776191196/WhatsApp_Image_2026-04-14_at_11.14.50_wdxnqw.jpg", title: "Classic Taper", size: "small", category: "Traditional" },
-    { url: "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&q=80&w=1000", title: "The Legacy", size: "medium", isLogo: true },
-    { url: "https://images.unsplash.com/photo-1621605815841-aa1291129994?auto=format&fit=crop&q=80&w=1000", title: "Razor Edge", size: "small", category: "Detailing" },
-    { url: "https://images.unsplash.com/photo-1593702295094-1725842951cd?auto=format&fit=crop&q=80&w=1000", title: "Textured Crop", size: "small", category: "Modern" },
-    { url: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=1000", title: "Master Craft", size: "medium", category: "Atmosphere" },
-    { url: "https://images.unsplash.com/photo-1532710093739-9470acff00bc?auto=format&fit=crop&q=80&w=1000", title: "Sharp Definition", size: "small", category: "Finish" },
-    { url: "https://images.unsplash.com/photo-1512690199101-83749aabf0bc?auto=format&fit=crop&q=80&w=1000", title: "Precision Tools", size: "small", category: "Artistry" },
-    { url: "https://images.unsplash.com/photo-1590540179852-21102545e1cc?auto=format&fit=crop&q=80&w=1000", title: "The Sanctuary", size: "medium", category: "Interior" },
+    { url: "https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png", title: "The Legacy", size: "medium", isLogo: true },
+    { url: "https://res.cloudinary.com/dggitwduo/image/upload/v1776181782/WhatsApp_Image_2026-04-14_at_11.14.49_nyfjzx.jpg", title: "Razor Edge", size: "small", category: "Detailing" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916392/WhatsApp_Image_2026-04-22_at_14.24.28_1_xjcyrp.jpg", title: "Textured Crop", size: "small", category: "Modern" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916386/WhatsApp_Image_2026-04-22_at_14.37.02_nvonum.jpg", title: "Master Craft", size: "medium", category: "Atmosphere" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916388/4_ulva3v.jpg", title: "Sharp Definition", size: "small", category: "Finish" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916386/7_vy9uut.jpg", title: "Precision Tools", size: "small", category: "Artistry" },
+    { url: "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916381/66_wencyp.jpg", title: "The Sanctuary", size: "medium", category: "Interior" },
+  ];
+
+  const galleryImages = [
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411034/WhatsApp_Image_2026-04-22_at_14.50.03.jpeg1111_zl8ihw.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411033/WhatsApp_Image_2026-05-25_at_08.50.26_olkyyo.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411033/WhatsApp_Image_2026-05-25_at_08.50.26.jpeg1_vkleve.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411032/WhatsApp_Image_2026-04-22_at_14.50.03_uqz3np.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411029/WhatsApp_Image_2026-05-22_at_12.30.27_vlkw0f.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411029/WhatsApp_Image_2026-05-22_at_12.31.33_bgcp0f.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411028/WhatsApp_Image_2026-05-22_at_21.10.25_bfhuzr.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411026/WhatsApp_Image_2026-05-22_at_12.29.50_zmkvnl.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/v1780411026/WhatsApp_Image_2026-04-22_at_14.52.33_xsjutk.jpg",
+    "https://res.cloudinary.com/dggitwduo/image/upload/v1776183249/WhatsApp_Image_2026-04-14_at_11.14.44_1_aqb6zl.jpg",
+    "https://res.cloudinary.com/dggitwduo/image/upload/v1776181782/WhatsApp_Image_2026-04-14_at_11.14.49_nyfjzx.jpg",
+    "https://res.cloudinary.com/dggitwduo/image/upload/v1776191196/WhatsApp_Image_2026-04-14_at_11.14.50_wdxnqw.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.50.02_bgba6b.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.24.26_oeviud.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916400/WhatsApp_Image_2026-04-22_at_14.50.03_kwvaiv.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916394/WhatsApp_Image_2026-04-22_at_14.37.03_inompp.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916391/WhatsApp_Image_2026-04-22_at_14.24.28_acv3zd.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916392/WhatsApp_Image_2026-04-22_at_14.24.28_1_xjcyrp.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916386/WhatsApp_Image_2026-04-22_at_14.37.02_nvonum.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916388/4_ulva3v.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916386/7_vy9uut.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916381/66_wencyp.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916379/22_trq3co.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916379/9_mvko7b.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916375/55_xldoai.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916371/11_sw6zqj.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916361/6_qo2avl.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916353/0_tlqd2e.jpg",
+    "https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto/f_auto/v1777916389/WhatsApp_Image_2026-04-22_at_21.13.26_t3c8ji.jpg"
   ];
 
   return (
@@ -1582,11 +4115,10 @@ const Portfolio = () => {
                 ${img.size === 'medium' ? 'col-span-2 row-span-1 md:col-span-2 md:row-span-1' : ''}
               `}
             >
-              <img 
+              <LazyImage 
                 src={img.url} 
                 alt={img.title} 
-                className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
-                referrerPolicy="no-referrer"
+                className="transition-transform duration-1000 group-hover:scale-105"
               />
               
               {img.isLogo ? (
@@ -1599,43 +4131,142 @@ const Portfolio = () => {
                   />
                 </div>
               ) : (
-                <div className="absolute inset-0 bg-gradient-to-t from-brand-dark/90 via-brand-dark/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-end p-8">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-red/80 mb-2">{img.category}</span>
-                  <h4 className="text-xl md:text-2xl font-black uppercase tracking-tight text-white">{img.title}</h4>
+                <div className="absolute inset-0 bg-gradient-to-t from-brand-dark/90 via-brand-dark/10 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-end p-8">
+                  <motion.div
+                    initial={{ y: 10, opacity: 0 }}
+                    whileHover={{ y: 0, opacity: 1 }}
+                    className="transform transition-transform duration-500"
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-red/80 mb-2 block">{img.category}</span>
+                    <h4 className="text-xl md:text-2xl font-black uppercase tracking-tight text-white">{img.title}</h4>
+                  </motion.div>
                 </div>
               )}
 
-              {/* Status Indicator for non-logo */}
-              {!img.isLogo && (
-                <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-500">
-                  <div className="p-3 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20">
-                    <ArrowRight className="w-4 h-4 text-white" />
-                  </div>
-                </div>
-              )}
+              {/* Status Indicator REMOVED */}
             </motion.div>
           ))}
         </div>
 
-        {/* View Instagram Button */}
-        <div className="mt-20 md:mt-32 flex justify-center">
+        {/* View Gallery and Instagram Buttons */}
+        <div className="mt-20 md:mt-32 flex flex-col md:flex-row justify-center items-stretch gap-6 md:gap-8 overflow-visible">
+            <motion.button 
+            onClick={() => setShowGallery(true)}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="flex flex-1 items-center justify-center gap-6 bg-brand-red text-white p-6 md:p-10 rounded-[2.5rem] md:rounded-[3rem] group shadow-3xl shadow-red-200 transition-all max-w-xl"
+          >
+            <div className="flex flex-col items-start min-w-0 flex-1">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-white/60 group-hover:text-white transition-colors mb-2">The Collection</span>
+              <span className="text-2xl md:text-5xl font-black uppercase tracking-tighter leading-none italic font-serif lowercase">View gallery</span>
+            </div>
+            <div className="w-16 h-16 md:w-24 md:h-24 bg-white/10 rounded-3xl md:rounded-[2rem] flex items-center justify-center shrink-0 group-hover:bg-white group-hover:text-brand-red transition-all">
+              <Camera className="w-8 h-8 md:w-12 md:h-12" />
+            </div>
+          </motion.button>
+          
           <motion.a 
             href="https://www.instagram.com/sizabantub/"
             target="_blank"
             rel="noopener noreferrer"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            className="flex items-center gap-8 bg-slate-900 text-white p-8 md:p-12 rounded-[2.5rem] md:rounded-[3rem] group shadow-3xl shadow-slate-200 transition-all w-full max-w-2xl"
+            className="flex flex-1 items-center gap-8 bg-slate-900 text-white p-6 md:p-10 rounded-[2.5rem] md:rounded-[3rem] group shadow-3xl shadow-slate-200 transition-all max-w-xl"
           >
             <div className="flex flex-col items-start min-w-0 flex-1">
               <span className="text-[10px] md:text-xs font-black uppercase tracking-[0.4em] text-white/40 group-hover:text-brand-red transition-colors mb-2">Connect With Us</span>
-              <span className="text-2xl md:text-5xl font-black uppercase tracking-tighter leading-none">View Instagram</span>
+              <span className="text-2xl md:text-5xl font-black uppercase tracking-tighter leading-none">Instagram</span>
             </div>
             <div className="w-16 h-16 md:w-24 md:h-24 bg-white/10 rounded-3xl md:rounded-[2rem] flex items-center justify-center shrink-0 group-hover:bg-brand-red transition-all">
               <Instagram className="w-8 h-8 md:w-12 md:h-12 text-white" />
             </div>
           </motion.a>
         </div>
+
+        {/* Full Gallery Overlay */}
+        <AnimatePresence>
+          {showGallery && (
+            <motion.div 
+              initial={{ opacity: 0, x: '100%' }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: '100%' }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="fixed inset-0 z-[1000] bg-white overflow-y-auto"
+            >
+              <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-100 p-6 md:p-12 flex justify-between items-center">
+                <div>
+                  <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-2 block">Full Collection</span>
+                  <h2 className="text-2xl md:text-4xl font-black uppercase tracking-tighter">Sizabantu Gallery</h2>
+                </div>
+                <button 
+                  onClick={() => setShowGallery(false)}
+                  className="p-3 bg-slate-900 text-white rounded-xl hover:bg-brand-red transition-all group"
+                >
+                  <X className="w-6 h-6 group-hover:rotate-90 transition-transform duration-300" />
+                </button>
+              </div>
+
+              <div className="max-w-7xl mx-auto p-2 md:p-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+                  {galleryImages.map((src, idx) => (
+                    <motion.div 
+                      key={idx}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: idx * 0.02 }}
+                      className="relative aspect-square overflow-hidden group cursor-pointer bg-slate-50"
+                      onClick={() => setSelectedGalleryImg(src)}
+                    >
+                      <LazyImage 
+                        src={src} 
+                        alt={`Gallery ${idx}`}
+                        className="transition-transform duration-700 group-hover:scale-105"
+                      />
+                      <div className="absolute inset-0 bg-brand-red/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">
+                          <CheckCircle2 className="w-5 h-5 text-brand-red" />
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Individual Image Lightbox */}
+        <AnimatePresence>
+          {selectedGalleryImg && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1100] bg-slate-900/98 flex items-center justify-center p-6"
+              onClick={() => setSelectedGalleryImg(null)}
+            >
+              <button 
+                className="absolute top-8 right-8 p-4 bg-white/10 hover:bg-brand-red rounded-2xl text-white transition-all backdrop-blur-md z-[1200]"
+                onClick={(e) => { e.stopPropagation(); setSelectedGalleryImg(null); }}
+              >
+                <X className="w-8 h-8" />
+              </button>
+              
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="relative max-w-5xl w-full max-h-[80vh] flex items-center justify-center"
+              >
+                <img 
+                  src={selectedGalleryImg}
+                  alt="Selected Gallery Item"
+                  className="max-w-full max-h-full object-contain rounded-3xl shadow-2xl border-4 border-white/10"
+                  referrerPolicy="no-referrer"
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </section>
   );
@@ -1738,7 +4369,221 @@ const Reviews = () => {
   );
 };
 
+// --- FAQ Section Component ---
+const FAQSection = () => {
+  const [activeCategory, setActiveCategory] = useState<'grooming' | 'booking' | 'loyalty'>('grooming');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const categories = [
+    { id: 'grooming', label: 'Services & Grooming', icon: Scissors },
+    { id: 'booking', label: 'Bookings & Policies', icon: Calendar },
+    { id: 'loyalty', label: 'Loyalty & Rewards', icon: Trophy }
+  ] as const;
+
+  const faqs = [
+    {
+      id: "g1",
+      category: "grooming",
+      question: "What services do you specialize in at Sizabantu?",
+      answer: "We specialize in premium modern fades, scissor cuts, tapers, beard sculpts, hot towel shaves, and comprehensive hair treatments. Every session begins with a detailed personal consultation to design a groom tailored perfectly to your custom aesthetic, head shape, and hair texture."
+    },
+    {
+      id: "g2",
+      category: "grooming",
+      question: "Do you cater to all hair textures and styles?",
+      answer: "Yes, absolutely! Our master barbers are fully trained and extensively experienced in styling and precision cutting for all hair textures, including Afro-textured, straight, curly, and wavy hair types."
+    },
+    {
+      id: "g3",
+      category: "grooming",
+      question: "How long does a typical signature grooming session take?",
+      answer: "A standard signature haircut or beard sculpt session takes approximately 30 to 45 minutes of detailed masterwork. Combined package services (such as a premium fade and beard sculpt combination) may take up to 60 minutes to ensure pristine detailing and hot towel care."
+    },
+    {
+      id: "b1",
+      category: "booking",
+      question: "How do I book, and can I cancel or reschedule my appointment?",
+      answer: "You can easily book or modify all of your appointments through our interactive live booking engine right here on the web dashboard. If you need to cancel or reschedule, please do so at least 2 hours before your scheduled appointment slot so that we can open the slot for another valued customer."
+    },
+    {
+      id: "b2",
+      category: "booking",
+      question: "Do you accept walk-ins, or is booking mandatory?",
+      answer: "While we highly recommend booking online to reserve your preferred barber and secure a guaranteed slot, we also welcome walk-ins based on real-time availability. You can check our physical wait times or look up current appointments directly inside our app's scheduling center!"
+    },
+    {
+      id: "b3",
+      category: "booking",
+      question: "What happens if I miss my appointment or arrive late?",
+      answer: "We allow a grace period of up to 10 minutes. If you are running late, please let us know. Arriving later than 10 minutes past your scheduled slot may result in a shortened service or require rescheduling to prevent keeping other clients waiting."
+    },
+    {
+      id: "l1",
+      category: "loyalty",
+      question: "Do you have a customer loyalty program?",
+      answer: "Yes! Every customer is automatically enrolled in our digital Sizabantu Loyalty Circle. Every signature booking, walk-in check-in, or verified service earns points that count toward free premium haircuts, beard oil packs, and priority VIP scheduling privileges."
+    },
+    {
+      id: "l2",
+      category: "loyalty",
+      question: "How do I track and redeem my loyalty rewards?",
+      answer: "Simply sign in to your profile on our web app. You will see your current active loyalty tier, points total, and lifetime cuts. You can present your personal interactive user QR code at checkout in-store to claim your earned rewards instantly."
+    },
+    {
+      id: "l3",
+      category: "loyalty",
+      question: "Can I share my loyalty points with friends or family?",
+      answer: "Your loyalty points are linked to your secure personal registered profile (phone number/email) to prevent fraud. However, you are welcome to book and pay for appointments on behalf of direct family or friends under your account to pool points!"
+    }
+  ];
+
+  const filteredFaqs = faqs.filter(faq => faq.category === activeCategory);
+
+  const toggleFaq = (id: string) => {
+    setExpandedId(prev => (prev === id ? null : id));
+  };
+
+  return (
+    <section id="faq" className="py-24 bg-slate-50 text-slate-900 border-t border-b border-slate-100 scroll-mt-20">
+      <div className="max-w-4xl mx-auto px-6">
+        {/* Section Header */}
+        <div className="text-center mb-16">
+          <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-4 block">Information Center</span>
+          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter leading-[0.85] mb-6">
+            Frequently Asked <span className="text-brand-blue italic font-serif lowercase tracking-normal">Questions</span>
+          </h2>
+          <p className="text-slate-500 max-w-lg mx-auto text-sm leading-relaxed">
+            Need details about our modern styling, digital scheduling, or point systems? Find prompt answers to common customer inquiries below.
+          </p>
+        </div>
+
+        {/* Categories Tab Selector */}
+        <div className="flex flex-wrap md:flex-nowrap justify-center gap-2 mb-12 bg-white/60 p-2 rounded-2xl md:rounded-[2rem] border border-slate-100 max-w-2xl mx-auto shadow-sm">
+          {categories.map((cat) => {
+            const CatIcon = cat.icon;
+            const isActive = activeCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => {
+                  setActiveCategory(cat.id);
+                  setExpandedId(null);
+                }}
+                className={`flex-1 min-w-[150px] flex items-center justify-center gap-2.5 px-4 py-3 md:py-4 rounded-xl md:rounded-2xl text-[10px] md:text-xs font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                  isActive
+                    ? 'bg-gradient-to-r from-brand-red to-brand-blue text-white shadow-md'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <CatIcon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                <span>{cat.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* FAQs Accompaniment Accordion */}
+        <div className="space-y-4">
+          <AnimatePresence mode="popLayout">
+            {filteredFaqs.map((faq) => {
+              const isExpanded = expandedId === faq.id;
+              return (
+                <motion.div
+                  key={faq.id}
+                  layout="position"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.3 }}
+                  className={`bg-white rounded-2xl md:rounded-[2rem] border transition-all duration-300 shadow-sm hover:shadow-md ${
+                    isExpanded 
+                      ? 'border-brand-blue/30 ring-1 ring-brand-blue/10 shadow-brand-blue/5' 
+                      : 'border-slate-100 hover:border-slate-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleFaq(faq.id)}
+                    className="w-full flex items-center justify-between text-left px-6 py-5 md:py-6 gap-4 cursor-pointer focus:outline-none"
+                    style={{ minHeight: '44px' }}
+                  >
+                    <div className="flex items-start gap-3.5">
+                      <HelpCircle className={`w-4 h-4 shrink-0 mt-0.5 transition-colors duration-300 ${
+                        isExpanded ? 'text-brand-blue' : 'text-slate-300'
+                      }`} />
+                      <span className="font-extrabold font-sans text-sm md:text-base leading-snug text-slate-800 hover:text-slate-950 transition-colors">
+                        {faq.question}
+                      </span>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${
+                      isExpanded ? 'rotate-180 text-brand-blue' : 'rotate-0'
+                    }`} />
+                  </button>
+
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div
+                        key="content"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                        className="overflow-hidden"
+                      >
+                        <div className="px-6 pb-6 md:pb-8 pt-1 text-slate-500 text-xs md:text-sm leading-relaxed border-t border-slate-50 font-medium">
+                          {faq.answer}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+
+        {/* Visual Call To Action Block */}
+        <div className="mt-16 text-center font-mono flex flex-col sm:flex-row justify-center items-center gap-2 text-[10px] md:text-xs text-slate-400 uppercase tracking-widest">
+          <span>Still have unanswered grooming concerns?</span>
+          <a
+            href="#book"
+            className="text-brand-red font-black underline hover:text-brand-blue inline-flex items-center gap-1 transition-colors"
+          >
+            <span>Book with our Master Barbers</span>
+            <ArrowRight className="w-3 h-3" />
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const ContactSection = () => {
+  const [formData, setFormData] = useState({ name: '', email: '', message: '' });
+  const [errors, setErrors] = useState<any>({});
+  const [isSent, setIsSent] = useState(false);
+
+  const validate = () => {
+    const newErrors: any = {};
+    if (!formData.name) newErrors.name = "Required";
+    if (!formData.email) newErrors.email = "Required";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = "Invalid email";
+    if (!formData.message) newErrors.message = "Required";
+    return newErrors;
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const validationErrors = validate();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+    setErrors({});
+    setIsSent(true);
+    setTimeout(() => setIsSent(false), 3000);
+  };
+
   return (
     <section id="contact" className="py-32 bg-white text-slate-900 relative overflow-hidden scroll-mt-20">
       {/* Background Accents */}
@@ -1784,8 +4629,8 @@ const ContactSection = () => {
                   <Mail className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Email</p>
-                  <p className="text-2xl md:text-3xl font-black tracking-tight">info@sizabantubarbershop.co.za</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Electronic Mail</p>
+                  <p className="text-2xl md:text-3xl font-black tracking-tight">sizabantubarbershop@gmail.com</p>
                 </div>
               </div>
             </div>
@@ -1820,24 +4665,70 @@ const ContactSection = () => {
               ></iframe>
             </div>
             
-            <div className="p-12 glass rounded-[3rem] border border-slate-200 shadow-2xl">
+            <div className="p-12 glass rounded-[3rem] border border-slate-200 shadow-2xl relative overflow-hidden">
+               <AnimatePresence>
+                {isSent && (
+                  <motion.div 
+                    initial={{ opacity: 0 }} 
+                    animate={{ opacity: 1 }} 
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 bg-brand-blue/90 backdrop-blur-md z-50 flex items-center justify-center p-8 text-center"
+                  >
+                    <div className="text-white">
+                      <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <CheckCircle2 className="w-8 h-8 text-white" />
+                      </div>
+                      <h3 className="text-2xl font-black uppercase tracking-tight mb-2">Message Sent</h3>
+                      <p className="text-white/60 font-serif italic">We'll get back to you shortly.</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-red mb-10">Direct Message</h4>
-              <form className="space-y-8" onSubmit={(e) => e.preventDefault()}>
+              <form className="space-y-8" onSubmit={handleSubmit}>
                 <div className="grid md:grid-cols-2 gap-8">
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Name</label>
-                    <input type="text" placeholder="John Doe" className="w-full bg-white border border-slate-200 rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all font-bold text-sm" />
+                    <div className="flex justify-between items-center px-2">
+                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Name</label>
+                       {errors.name && <span className="text-[8px] text-brand-red font-black uppercase">{errors.name}</span>}
+                    </div>
+                    <input 
+                      type="text" 
+                      placeholder="John Doe" 
+                      value={formData.name}
+                      onChange={(e) => setFormData({...formData, name: e.target.value})}
+                      className={`w-full bg-white border ${errors.name ? 'border-brand-red' : 'border-slate-200'} rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all font-bold text-sm`} 
+                    />
                   </div>
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Email</label>
-                    <input type="email" placeholder="john@example.com" className="w-full bg-white border border-slate-200 rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all font-bold text-sm" />
+                    <div className="flex justify-between items-center px-2">
+                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</label>
+                       {errors.email && <span className="text-[8px] text-brand-red font-black uppercase">{errors.email}</span>}
+                    </div>
+                    <input 
+                      type="email" 
+                      placeholder="john@example.com" 
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                      className={`w-full bg-white border ${errors.email ? 'border-brand-red' : 'border-slate-200'} rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all font-bold text-sm`} 
+                    />
                   </div>
                 </div>
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Message</label>
-                  <textarea placeholder="Tell us about your dream cut..." rows={4} className="w-full bg-white border border-slate-200 rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all resize-none font-bold text-sm"></textarea>
+                  <div className="flex justify-between items-center px-2">
+                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Message</label>
+                     {errors.message && <span className="text-[8px] text-brand-red font-black uppercase">{errors.message}</span>}
+                  </div>
+                  <textarea 
+                    placeholder="Tell us about your dream cut..." 
+                    rows={4} 
+                    value={formData.message}
+                    onChange={(e) => setFormData({...formData, message: e.target.value})}
+                    className={`w-full bg-white border ${errors.message ? 'border-brand-red' : 'border-slate-200'} rounded-2xl px-6 py-4 focus:outline-none focus:border-brand-blue transition-all resize-none font-bold text-sm`}
+                  ></textarea>
                 </div>
-                <button className="w-full bg-brand-red text-white hover:bg-brand-dark py-6 rounded-2xl font-black uppercase tracking-[0.3em] text-[10px] transition-all flex items-center justify-center gap-4">
+                <button type="submit" className="w-full bg-brand-red text-white hover:bg-brand-dark py-6 rounded-2xl font-black uppercase tracking-[0.3em] text-[10px] transition-all flex items-center justify-center gap-4">
                   Send Message
                   <Send className="w-4 h-4" />
                 </button>
@@ -1888,7 +4779,7 @@ const Footer = () => {
             <h4 className="font-black uppercase tracking-widest text-[10px] mb-8">Contact Information</h4>
             <ul className="space-y-4 text-slate-500 text-sm">
               <li className="flex items-center gap-3"><Phone className="w-4 h-4 text-brand-red" /> +27 60 724 6829</li>
-              <li className="flex items-center gap-3"><Mail className="w-4 h-4 text-brand-red" /> info@sizabantubarbershop.co.za</li>
+              <li className="flex items-center gap-3"><Mail className="w-4 h-4 text-brand-red" /> sizabantubarbershop@gmail.com</li>
               <li className="flex items-center gap-3"><MapPin className="w-4 h-4 text-brand-red" /> Klipfontein View, Midrand</li>
             </ul>
           </div>
@@ -1920,15 +4811,152 @@ const Footer = () => {
   );
 };
 
+// --- Email Verification Prompt Component ---
+const EmailVerificationPrompt = ({ user, logout }: { user: FirebaseUser; logout: () => void }) => {
+  const [isSending, setIsSending] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSendVerification = async () => {
+    setIsSending(true);
+    setMessage('');
+    setError('');
+    try {
+      await sendEmailVerification(user);
+      setMessage('A new verification email has been sent to your inbox. Please check your spam folder.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification email. Please try again.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const initialSend = async () => {
+      try {
+        await sendEmailVerification(user);
+        if (active) {
+          setMessage('A verification email has been sent. Please check your email to verify your address.');
+        }
+      } catch (err: any) {
+        console.warn("Initial verification send failed:", err);
+        if (active) {
+          setMessage('Please look for the verification link previously sent to your email.');
+        }
+      }
+    };
+    initialSend();
+    return () => { active = false; };
+  }, [user]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setMessage('');
+    setError('');
+    try {
+      await user.reload();
+      if (user.emailVerified) {
+        window.location.reload();
+      } else {
+        setError('Email is still unverified. Please check your email and click the verification link.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to check verification status.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-[9999] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-6 text-white"
+    >
+      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-15 pointer-events-none"></div>
+      
+      <motion.div 
+        initial={{ scale: 0.95, y: 15 }}
+        animate={{ scale: 1, y: 0 }}
+        className="max-w-md w-full bg-slate-800 border border-white/10 rounded-[3rem] p-10 text-center shadow-3xl relative"
+      >
+        <div className="flex justify-center mb-6">
+          <div className="w-16 h-16 bg-brand-red/10 border border-brand-red/25 rounded-2xl flex items-center justify-center text-brand-red animate-pulse">
+            <Mail className="w-8 h-8" />
+          </div>
+        </div>
+
+        <h3 className="text-2xl font-black uppercase tracking-tight mb-2">Verify Your Email</h3>
+        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+          We have introduced a mandatory email verification step to ensure client authenticity. 
+          Please verify <strong className="text-white">{user.email}</strong> to unlock booking and features.
+        </p>
+
+        {message && (
+          <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 text-xs text-left mb-6 leading-relaxed flex gap-3 items-start">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{message}</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-xs text-left mb-6 leading-relaxed flex gap-3 items-start">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="w-full bg-brand-blue hover:bg-brand-blue/90 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl transition-all shadow-lg flex items-center justify-center gap-2"
+          >
+            {isRefreshing ? (
+              <>
+                <RefreshCcw className="w-4 h-4 animate-spin" />
+                Verifying...
+              </>
+            ) : (
+              'I have verified my email'
+            )}
+          </button>
+
+          <button
+            onClick={handleSendVerification}
+            disabled={isSending || isRefreshing}
+            className="w-full bg-slate-700/50 hover:bg-slate-700 hover:border-white/10 text-slate-200 border border-white/5 font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl transition-all"
+          >
+            {isSending ? 'Sending link...' : 'Resend Verification Email'}
+          </button>
+
+          <button
+            onClick={logout}
+            className="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white font-black uppercase tracking-widest text-[9px] py-2 transition-all mt-2"
+          >
+            Cancel & Logout
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, logout } = useAuth();
+  useAppointmentReminders(profile);
 
   return (
     <div className="min-h-screen bg-white font-sans selection:bg-brand-blue selection:text-white">
       <NotificationCenter />
       <TopNav />
+      {user && !user.emailVerified && !loading && (
+        <EmailVerificationPrompt user={user} logout={logout} />
+      )}
       <main className="transition-all duration-500">
         <Hero />
         <Mission />
@@ -1936,15 +4964,20 @@ export default function App() {
         {/* Conditional Admin Hub */}
         {profile?.role === 'admin' && (
           <div id="admin-hub" className="scroll-mt-32">
-            <AdminDashboard />
+            <ErrorBoundary name="AdminDashboard">
+              <AdminDashboard />
+            </ErrorBoundary>
           </div>
         )}
         
-        <BookingSystem profile={profile} />
+        <ErrorBoundary name="BookingSystem">
+          <BookingSystem profile={profile} />
+        </ErrorBoundary>
         <WelcomeJourney />
         <HaircutPricing />
         <Portfolio />
         <Reviews />
+        <FAQSection />
         <ContactSection />
         <Footer />
       </main>

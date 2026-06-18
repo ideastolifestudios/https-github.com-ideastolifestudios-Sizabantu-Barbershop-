@@ -71,3 +71,48 @@
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   opacity: 0.03;
 }
+
+/* Printer Friendly CSS Styles */
+@media print {
+  html, body {
+    background: white !important;
+    color: #000000 !important;
+    font-family: monospace !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  /* Hide all dashboard chrome */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Show only our receipt container */
+  #printable-receipt-modal,
+  #printable-receipt-modal * {
+    visibility: visible !important;
+  }
+  
+  #printable-receipt-modal {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 20px !important;
+    margin: 0 !important;
+  }
+  
+  /* Explicitly hide non-printable elements in receipt (like close / print buttons) */
+  .no-print {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+}
+
