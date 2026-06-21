@@ -1,0 +1,103 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Star, Heart, CheckCircle2 } from 'lucide-react';
+
+export const Reviews = () => {
+  const reviews = [
+    { name: "Thabo Mokoena", rating: 5, text: "Best fade in the city. Professional service and great atmosphere. Highly recommended!", date: "2 weeks ago" },
+    { name: "Sarah Jenkins", rating: 5, text: "Brought my son here and they were so patient. The cut was perfect. We'll be back!", date: "1 month ago" },
+    { name: "David Smith", rating: 5, text: "Premium experience from start to finish. The attention to detail is unmatched.", date: "3 days ago" },
+    { name: "Lerato Cele", rating: 5, text: "Too fresh, too clean! Exactly what I asked for. Best barbershop in Klipfontein.", date: "1 week ago" }
+  ];
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % reviews.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [reviews.length]);
+
+  return (
+    <section id="reviews" className="py-20 md:py-32 bg-white text-slate-900 relative overflow-hidden scroll-mt-20">
+      {/* Atmospheric Background */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-brand-blue/5 blur-[150px] rounded-full"></div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6 relative z-10">
+        <div className="text-center mb-12 md:mb-20">
+          <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-4 md:6 block">Testimonials</span>
+          <h2 className="text-4xl md:text-8xl font-black uppercase tracking-tighter leading-[0.85] mb-6 md:mb-8">
+            The <span className="text-brand-blue italic font-serif lowercase tracking-normal">Word</span> <br /> On The Street
+          </h2>
+          <div className="flex items-center justify-center gap-1">
+            {[...Array(5)].map((_, i) => (
+              <Star key={i} className="w-4 h-4 fill-brand-red text-brand-red" />
+            ))}
+            <span className="text-[10px] md:text-sm font-black uppercase tracking-widest text-brand-red ml-2">5.0 Overall Rating</span>
+          </div>
+        </div>
+
+        <div className="max-w-3xl mx-auto relative h-[300px] md:h-[400px]">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentIndex}
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="absolute inset-0 glass p-8 md:p-12 rounded-3xl md:rounded-[3rem] border border-slate-100 flex flex-col justify-center text-center group"
+            >
+              {/* Stars added here too */}
+              <div className="flex justify-center gap-1 mb-6">
+                {[...Array(reviews[currentIndex].rating)].map((_, i) => (
+                  <Star key={i} className="w-3 h-3 fill-brand-red text-brand-red" />
+                ))}
+              </div>
+              <p className="text-lg md:text-2xl font-light italic font-serif leading-relaxed text-slate-600 mb-8 md:mb-12 relative z-10">
+                "{reviews[currentIndex].text}"
+              </p>
+              <div className="flex flex-col items-center gap-4 pt-6 md:pt-8 border-t border-slate-100">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-brand-red rounded-full flex items-center justify-center text-white font-black text-xs md:text-sm">
+                  {reviews[currentIndex].name.charAt(0)}
+                </div>
+                <div>
+                  <p className="font-black uppercase tracking-tight text-xs md:text-sm text-slate-900">{reviews[currentIndex].name}</p>
+                  <p className="text-[8px] md:text-[10px] font-bold text-slate-300 uppercase tracking-widest">{reviews[currentIndex].date}</p>
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Carousel Indicators */}
+          <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 flex gap-2">
+            {reviews.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => setCurrentIndex(idx)}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${currentIndex === idx ? 'w-8 bg-brand-red' : 'bg-slate-200'}`}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-24 text-center">
+          <a
+            href="https://share.google/0S8TOcfrmPkNRfo0Z"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-4 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 hover:text-brand-blue transition-colors group"
+          >
+            <Star className="w-3 h-3" />
+            View all Google Reviews
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+// --- FAQ Section Component ---
+export default Reviews;

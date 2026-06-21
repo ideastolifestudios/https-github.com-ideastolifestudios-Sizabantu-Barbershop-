@@ -1,0 +1,1267 @@
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import { Scissors, Clock, CheckCircle2, ChevronRight, Zap, QrCode, ShieldCheck, Trophy, Calendar, Users, X, MapPin, Phone, Mail, Instagram, MessageSquare, Star, Send, ExternalLink, User, LogOut, Settings, Trash2, RefreshCcw, Bell, Camera, History, Heart, Scan, Printer, Download, HelpCircle, ChevronDown, Search, Sparkles, Filter, AlertCircle, Menu, ArrowRight } from "lucide-react";
+import { doc, collection, query, where, onSnapshot, addDoc, serverTimestamp, Timestamp, getDocs, updateDoc, deleteDoc, orderBy, limit } from "firebase/firestore";
+import { db, auth } from "../../lib/firebase";
+import { useAuth } from "../../hooks/useAuth";
+import { useBusinessData } from "../../hooks/useBusinessData";
+import { handleDownloadPDF } from "../../lib/receipt";
+import { socket } from "../../lib/socket";
+import { triggerToast } from "../../hooks/useAppointmentReminders";
+
+export const BookingSystem = ({ profile }: { profile: any }) => {
+  const { services: SERVICES } = useBusinessData();
+const {
+  authStep, setAuthStep, email, setEmail,
+  otp, setOtp, isSendingCode, requestOTP,
+  verifyOTP, loginGoogle, handleFirestoreError,
+  emailError, otpError
+} = useAuth();
+const [activeBooking, setActiveBooking] = useState<any>(null);
+const [queue, setQueue] = useState<any[]>([]);
+const [userBookings, setUserBookings] = useState<any[]>([]);
+const [bookingFlow, setBookingFlow] = useState<'none' | 'queue' | 'scheduled'>('none');
+const [selectedService, setSelectedService] = useState<string>('');
+const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+const [selectedTime, setSelectedTime] = useState<string>('');
+const [showLoginModal, setShowLoginModal] = useState(false);
+const [showQRModal, setShowQRModal] = useState(false);
+const [confirmedBookingDetails, setConfirmedBookingDetails] = useState<any | null>(null);
+
+useEffect(() => {
+  const handleSelectService = (e: any) => {
+    const { serviceId } = e.detail || {};
+    if (serviceId) {
+      setSelectedService(serviceId);
+      if (bookingFlow === 'none') {
+        setBookingFlow('scheduled');
+      }
+      const bookSec = document.getElementById('book');
+      if (bookSec) {
+        bookSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  };
+  window.addEventListener('select-service', handleSelectService);
+  return () => window.removeEventListener('select-service', handleSelectService);
+}, [bookingFlow]);
+
+// Receipt States for Client History Print
+const [selectedReceiptBooking, setSelectedReceiptBooking] = useState<any | null>(null);
+const [showReceiptModal, setShowReceiptModal] = useState(false);
+
+const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
+
+// Generate next 7 days for the calendar
+const nextDates = Array.from({ length: 7 }, (_, i) => {
+  const d = new Date();
+  d.setDate(d.getDate() + i);
+  return {
+    full: d.toISOString().split('T')[0],
+    day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+    date: d.getDate(),
+    isToday: i === 0
+  };
+});
+
+useEffect(() => {
+  if (!profile) {
+    setUserBookings([]);
+    setActiveBooking(null);
+    return;
+  }
+
+  const q = query(
+    collection(db, 'bookings'),
+    where('userId', '==', profile.uid)
+  );
+
+  const unsubscribeBookings = onSnapshot(q, (snapshot) => {
+    const bookingsList: any[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      let dateVal = 0;
+      if (data.createdAt) {
+        if (typeof data.createdAt.toMillis === 'function') {
+          dateVal = data.createdAt.toMillis();
+        } else if (data.createdAt.seconds) {
+          dateVal = data.createdAt.seconds * 1000;
+        } else {
+          dateVal = new Date(data.createdAt).getTime();
+        }
+      }
+      bookingsList.push({ id: doc.id, ...data, _createdTime: dateVal });
+    });
+
+    // Sort bookings by creation date descending
+    bookingsList.sort((a, b) => b._createdTime - a._createdTime);
+    setUserBookings(bookingsList);
+
+    // Extract active booking: the first one with an active status
+    const active = bookingsList.find(b =>
+      ['pending', 'confirmed', 'checked-in', 'in-progress'].includes(b.status)
+    );
+
+    if (active) {
+      setActiveBooking(active);
+      setBookingFlow('none');
+    } else {
+      setActiveBooking(null);
+    }
+  }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
+
+  const queueQuery = query(
+    collection(db, 'bookings'),
+    where('type', '==', 'queue'),
+    where('status', 'in', ['pending', 'confirmed', 'checked-in']),
+    orderBy('createdAt', 'asc')
+  );
+
+  const unsubscribeQueue = onSnapshot(queueQuery, (snapshot) => {
+    setQueue(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+  }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
+
+  return () => {
+    unsubscribeBookings();
+    unsubscribeQueue();
+  };
+}, [profile]);
+
+const handleQuickRebook = (serviceId: string) => {
+  setSelectedService(serviceId);
+  setBookingFlow('scheduled');
+  const bookEl = document.getElementById('book');
+  if (bookEl) {
+    bookEl.scrollIntoView({ behavior: 'smooth' });
+  }
+};
+
+const pastBookings = React.useMemo(() => {
+  return userBookings.filter(b =>
+    !['pending', 'confirmed', 'checked-in', 'in-progress'].includes(b.status)
+  );
+}, [userBookings]);
+
+const favoriteServicesList = React.useMemo(() => {
+  if (!pastBookings.length) return [];
+
+  // Count occurrences of each serviceId
+  const counts: Record<string, number> = {};
+  pastBookings.forEach((b) => {
+    if (b.serviceId) {
+      counts[b.serviceId] = (counts[b.serviceId] || 0) + 1;
+    }
+  });
+
+  // Create a list with counts and sort by booking count descending
+  return Object.entries(counts)
+    .map(([serviceId, count]) => {
+      const s = SERVICES.find((service) => service.id === serviceId);
+      return { service: s, count };
+    })
+    .filter((item) => item.service !== undefined)
+    .sort((a, b) => b.count - a.count);
+}, [pastBookings]);
+
+const createBooking = async (type: 'queue' | 'scheduled') => {
+  if (!profile) {
+    setShowLoginModal(true);
+    return;
+  }
+  if (!selectedService) return;
+
+  let scheduledDate = serverTimestamp();
+
+  if (type === 'scheduled' && selectedTime) {
+    const bookingDate = new Date(selectedDate);
+    const [hours, minutes] = selectedTime.split(':');
+    bookingDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    scheduledDate = Timestamp.fromDate(bookingDate);
+  }
+
+  const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const service = SERVICES.find(s => s.id === selectedService);
+  const bookingData = {
+    userId: profile.uid,
+    userName: profile.displayName,
+    userEmail: profile.email,
+    type,
+    location: 'shop',
+    clientAddress: 'Klipfontein View Shop',
+    travelFee: 0,
+    totalPaid: (service?.price || 0),
+    status: 'confirmed',
+    serviceId: selectedService,
+    serviceName: service?.name || 'Custom Cut',
+    scheduledAt: scheduledDate,
+    verificationCode,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    const docRef = await addDoc(collection(db, 'bookings'), bookingData);
+
+    // Emit to server to trigger Google Calendar sync
+    socket.emit('booking:new', {
+      ...bookingData,
+      id: docRef.id,
+      scheduledAt: scheduledDate instanceof Timestamp ? scheduledDate.toDate().toISOString() : new Date().toISOString()
+    });
+
+    // Format display time
+    let displayTime = 'Walk-In Now (Live Queue)';
+    if (type === 'scheduled' && selectedTime) {
+      try {
+        const d = new Date(selectedDate);
+        const formattedDate = d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        displayTime = `${formattedDate} at ${selectedTime}`;
+      } catch (e) {
+        displayTime = `${selectedDate} at ${selectedTime}`;
+      }
+    }
+
+    setConfirmedBookingDetails({
+      ...bookingData,
+      id: docRef.id,
+      servicePrice: service?.price || 0,
+      serviceDesc: service?.desc || '',
+      count: 1,
+      displayTime,
+      queuePosition: type === 'queue' ? (queue.length + 1) : null,
+      estimatedWait: type === 'queue' ? (queue.length * 15) : null,
+    });
+
+    setBookingFlow('none');
+    setSelectedService('');
+    setSelectedTime('');
+  } catch (err) {
+    console.error("Booking Error:", err);
+  }
+};
+
+return (
+  <section id="book" className="py-24 bg-slate-900 text-white overflow-hidden relative scroll-mt-20">
+    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
+
+    {/* Digital QR ID Pass Modal */}
+    <AnimatePresence>
+      {showQRModal && profile && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2000] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-6 text-white"
+        >
+          <motion.div
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 20 }}
+            className="max-w-md w-full bg-slate-800 border border-white/10 rounded-[3rem] p-10 text-center shadow-3xl relative overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-15 pointer-events-none"></div>
+
+            <button
+              onClick={() => setShowQRModal(false)}
+              className="absolute top-8 right-8 p-3 bg-white/5 hover:bg-white/15 text-white/50 hover:text-white rounded-2xl transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex justify-center mb-6">
+              <div className="w-14 h-14 bg-brand-red/10 border border-brand-red/25 rounded-2xl flex items-center justify-center text-brand-red animate-pulse">
+                <QrCode className="w-7 h-7" />
+              </div>
+            </div>
+
+            <h3 className="text-2xl font-black uppercase tracking-tight mb-2">Your Digital Pass</h3>
+            <p className="text-slate-400 text-xs mb-6 max-w-sm mx-auto leading-relaxed">
+              Present this unique QR code to the barber at checkout to log your in-person visit and claim your loyalty stamps!
+            </p>
+
+            {/* QR Code Graphic Frame */}
+            <div className="relative mx-auto w-56 h-56 bg-white p-4 rounded-[2rem] shadow-2xl flex items-center justify-center border border-white/10 mb-6 group">
+              <div className="absolute -inset-2 rounded-[2.5rem] bg-gradient-to-tr from-brand-red to-brand-blue opacity-20 blur-lg group-hover:opacity-30 transition-opacity"></div>
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f172a&data=${profile.uid}`}
+                alt="Sizabantu Loyalty QR Code"
+                className="w-48 h-48 relative z-10 select-none pointer-events-none rounded-lg"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+
+            {/* User Details Box */}
+            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 mb-4 text-left">
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Member Account</p>
+              <p className="font-extrabold uppercase text-white tracking-tight">{profile.displayName || 'Sizabantu Client'}</p>
+              <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 pt-2 border-t border-white/5">
+                <span className="font-mono text-white/40 break-all select-all">ID: {profile.uid}</span>
+                <span className="font-black text-brand-red hover:underline cursor-pointer flex items-center gap-1 select-none shrink-0" onClick={() => {
+                  navigator.clipboard.writeText(profile.uid);
+                  alert("User ID copied to clipboard!");
+                }}>
+                  Copy ID
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowQRModal(false)}
+              className="w-full bg-white/5 hover:bg-white/10 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-xl transition-all border border-white/10"
+            >
+              Close Pass
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Transaction Receipt Modal */}
+    <AnimatePresence>
+      {showReceiptModal && selectedReceiptBooking && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2020] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+        >
+          <motion.div
+            initial={{ scale: 0.95, y: 15 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 15 }}
+            className="max-w-md w-full bg-[#f8f9fa] border-4 border-slate-200 rounded-[2rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+          >
+            <div
+              id="printable-receipt-modal"
+              className="p-8 pb-4 text-left overflow-y-auto flex-1 font-mono text-slate-800"
+            >
+              {/* Receipt Header */}
+              <div className="text-center space-y-1 mb-6 border-b-2 border-dashed border-slate-300 pb-5">
+                <h3 className="text-xl font-black uppercase tracking-tight text-slate-950 font-sans">Sizabantu Barbershop</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Premium Grooming Experience</p>
+                <p className="text-[8px] tracking-widest text-slate-400">ESTABLISHED IN 2022 • SOUTH AFRICA</p>
+                <div className="pt-2 text-[9px] text-slate-500 uppercase font-bold">
+                  OFFICIAL CUSTOMER RECEIPT
+                </div>
+              </div>
+
+              {/* Booking & Transaction Meta */}
+              <div className="space-y-2 text-xs mb-6 border-b border-dashed border-slate-200 pb-5">
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Booking Ref:</span>
+                  <span className="font-bold text-slate-900">#{selectedReceiptBooking.id.toUpperCase().slice(0, 10)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Date & Time:</span>
+                  <span className="font-bold text-slate-900">
+                    {(() => {
+                      if (selectedReceiptBooking.scheduledAt) {
+                        try {
+                          let d: Date;
+                          if (typeof selectedReceiptBooking.scheduledAt.toDate === 'function') {
+                            d = selectedReceiptBooking.scheduledAt.toDate();
+                          } else if (selectedReceiptBooking.scheduledAt.seconds) {
+                            d = new Date(selectedReceiptBooking.scheduledAt.seconds * 1000);
+                          } else {
+                            d = new Date(selectedReceiptBooking.scheduledAt);
+                          }
+                          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        } catch (e) {
+                          return String(selectedReceiptBooking.scheduledAt);
+                        }
+                      } else if (selectedReceiptBooking.createdAt) {
+                        try {
+                          let d: Date;
+                          if (typeof selectedReceiptBooking.createdAt.toDate === 'function') {
+                            d = selectedReceiptBooking.createdAt.toDate();
+                          } else if (selectedReceiptBooking.createdAt.seconds) {
+                            d = new Date(selectedReceiptBooking.createdAt.seconds * 1000);
+                          } else {
+                            d = new Date(selectedReceiptBooking.createdAt);
+                          }
+                          return d.toLocaleDateString() + ' (Walk-In)';
+                        } catch (e) {}
+                      }
+                      return 'Walk-In Session';
+                    })()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Client Name:</span>
+                  <span className="font-extrabold text-slate-900 uppercase">{selectedReceiptBooking.userName || 'Client (Direct Guest)'}</span>
+                </div>
+                {selectedReceiptBooking.verificationCode && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Security Pin:</span>
+                    <span className="font-bold text-brand-red">{selectedReceiptBooking.verificationCode}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Items and Totals */}
+              <div className="mb-6">
+                <div className="flex justify-between font-bold text-[10px] text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-300">
+                  <span>Selected Service</span>
+                  <div className="flex gap-8">
+                    <span>QTY</span>
+                    <span>PRICE</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-between text-xs py-3.5 border-b border-slate-200">
+                  <span className="font-extrabold text-slate-900 uppercase truncate max-w-[180px]">
+                    {selectedReceiptBooking.serviceName || 'Premium Haircut'}
+                  </span>
+                  <div className="flex gap-11 shrink-0">
+                    <span>1</span>
+                    <span className="font-bold text-slate-900">R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-4">
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase text-[10px]">Subtotal:</span>
+                    <span>R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase text-[10px]">Vat (15%):</span>
+                    <span>R0.00</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t border-slate-300">
+                    <span className="uppercase text-[11px] tracking-wider">Grand Total:</span>
+                    <span className="text-[17px] font-sans font-black italic">R{selectedReceiptBooking.totalPaid || 50}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CSS Barcode sequence decoration */}
+              <div className="flex justify-center items-center gap-[1px] h-12 bg-white px-4 py-2 border border-slate-200 my-6">
+                {[...Array(35)].map((_, i) => {
+                  const widthClass = i % 2 === 0 ? 'w-[1.5px]' : i % 3 === 0 ? 'w-[3px]' : i % 5 === 0 ? 'w-[4px]' : 'w-[1px]';
+                  return (
+                    <div key={i} className={`h-full bg-slate-950 ${widthClass}`} />
+                  );
+                })}
+              </div>
+
+              {/* Footer Greeting */}
+              <div className="text-center space-y-1.5 text-[9px] text-slate-400">
+                <p className="font-black text-slate-600 uppercase">Thank you for your valuable support!</p>
+                <p>Sizabantu Barbershop | Established 2022</p>
+                <p className="font-mono text-[7px] text-slate-300 mt-2">TRANS-ID: {selectedReceiptBooking.id.toUpperCase()}</p>
+              </div>
+            </div>
+
+            {/* Action utilities - hidden during browser print */}
+            <div className="no-print p-6 bg-slate-100 border-t border-slate-200 flex flex-col gap-2 rounded-b-[2rem]">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Receipt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPDF(selectedReceiptBooking)}
+                  className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-red text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download PDF
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReceiptModal(false);
+                  setSelectedReceiptBooking(null);
+                }}
+                className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px] py-3.5 rounded-xl transition-all cursor-pointer focus:outline-none"
+              >
+                Close Receipt
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Login Modal */}
+    <AnimatePresence>
+      {showLoginModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2000] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6"
+        >
+          <motion.div
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 20 }}
+            className="max-w-md w-full bg-white rounded-[3rem] p-12 text-slate-900 text-center shadow-3xl relative overflow-hidden"
+          >
+            <button
+              onClick={() => setShowLoginModal(false)}
+              className="absolute top-8 right-8 p-3 bg-slate-50 text-slate-400 hover:text-brand-red rounded-2xl transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex justify-center mb-8">
+              <div className="w-16 h-16 bg-brand-red/10 flex items-center justify-center rounded-2xl p-3">
+                <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-10 h-10 object-contain" alt="Logo" referrerPolicy="no-referrer" />
+              </div>
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tight mb-4">Member Entry</h3>
+            <p className="text-slate-400 text-xs font-bold leading-relaxed mb-8">Please sign in to secure your session and earn loyalty stamps.</p>
+
+            <div className="space-y-4">
+              <AnimatePresence mode="wait">
+                {authStep === 'methods' && (
+                  <motion.div key="methods" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+                    <button
+                      onClick={() => setAuthStep('email')}
+                      className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-brand-red transition-all flex items-center justify-center gap-3"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Continue with Email
+                    </button>
+                    <button
+                      onClick={async () => { await loginGoogle(); if (auth.currentUser) setShowLoginModal(false); }}
+                      className="w-full bg-slate-50 border border-slate-100 text-slate-900 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-100 transition-all flex items-center justify-center gap-3"
+                    >
+                      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
+                      Google Login
+                    </button>
+                  </motion.div>
+                )}
+
+                {authStep === 'email' && (
+                  <motion.form key="email" onSubmit={requestOTP} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="name@domain.com"
+                      className="w-full bg-slate-50 border border-slate-100 px-6 py-4 rounded-2xl text-slate-900 font-bold outline-none focus:border-brand-blue"
+                    />
+                    <button type="submit" disabled={isSendingCode} className="w-full bg-brand-red text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px]">
+                      {isSendingCode ? 'Sending...' : 'Send Access Code'}
+                    </button>
+                    <button type="button" onClick={() => setAuthStep('methods')} className="text-[9px] font-black uppercase text-slate-400 underline">Back</button>
+                  </motion.form>
+                )}
+
+                {authStep === 'otp' && (
+                  <motion.form key="otp" onSubmit={async (e) => { await verifyOTP(e); if (auth.currentUser) setShowLoginModal(false); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                    <input
+                      type="text"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      placeholder="000 000"
+                      className="w-full bg-slate-50 border border-slate-100 px-6 py-4 rounded-2xl text-slate-900 font-black text-2xl text-center tracking-widest outline-none"
+                    />
+                    <button type="submit" className="w-full bg-brand-blue text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px]">Verify & Continue</button>
+                  </motion.form>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* Post-Booking Confirmation Modal */}
+    <AnimatePresence>
+      {confirmedBookingDetails && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[2000] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6"
+        >
+          <motion.div
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, y: 20 }}
+            className="max-w-lg w-full bg-slate-800 border border-white/10 rounded-[3rem] p-10 text-white text-center shadow-3xl relative overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-15 pointer-events-none"></div>
+
+            <button
+              onClick={() => setConfirmedBookingDetails(null)}
+              className="absolute top-8 right-8 p-3 bg-white/5 text-white/40 hover:text-brand-red rounded-2xl transition-all border border-white/5"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex justify-center mb-8">
+              <div className="w-16 h-16 bg-brand-red/10 flex items-center justify-center rounded-2xl border border-brand-red/20 shadow-[0_0_20px_rgba(239,68,68,0.2)] p-3">
+                <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-10 h-10 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+              </div>
+            </div>
+
+            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-blue mb-2 block">Reservation Secured</span>
+            <h3 className="text-3xl font-black uppercase tracking-tight mb-8">Booking Confirmed</h3>
+
+            {/* Summary of user's booking details */}
+            <div className="bg-white/5 border border-white/10 rounded-[2rem] p-6 text-left space-y-6 mb-8 relative">
+              <div className="absolute top-0 right-8 transform -translate-y-1/2 bg-brand-red text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                Ref: #{confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'LEGACY'}
+              </div>
+
+              {/* Selected Service and description */}
+              <div className="flex justify-between items-start border-b border-white/5 pb-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Service Selected</p>
+                  <p className="text-lg font-black uppercase tracking-tight text-white leading-tight">
+                    {confirmedBookingDetails.serviceName}
+                  </p>
+                  {confirmedBookingDetails.serviceDesc && (
+                    <p className="text-[10px] text-white/50 mt-1">{confirmedBookingDetails.serviceDesc}</p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-black italic text-brand-blue">R{confirmedBookingDetails.servicePrice}</span>
+                </div>
+              </div>
+
+              {/* Count (quantity), time, and status */}
+              <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Service Count</p>
+                  <p className="font-extrabold text-white">{confirmedBookingDetails.count}x Service</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Booking Status</p>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-500 text-[10px] font-black uppercase tracking-wider mt-0.5">
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                    {confirmedBookingDetails.status}
+                  </span>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-0.5">Appointed Time</p>
+                  <div className="flex items-center gap-2 font-extrabold text-white text-base">
+                    {confirmedBookingDetails.type === 'scheduled' ? (
+                      <Calendar className="w-4 h-4 text-brand-blue shrink-0" />
+                    ) : (
+                      <Clock className="w-4 h-4 text-brand-red shrink-0" />
+                    )}
+                    <span>{confirmedBookingDetails.displayTime}</span>
+                  </div>
+                  {confirmedBookingDetails.type === 'queue' && (
+                    <p className="text-[9px] text-white/40 uppercase mt-1.5">
+                      Position: #{confirmedBookingDetails.queuePosition} in queue • Est. Wait: ~{confirmedBookingDetails.estimatedWait} mins
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Dismiss Button */}
+            <div className="space-y-3">
+              <button
+                onClick={() => setConfirmedBookingDetails(null)}
+                className="w-full bg-brand-red text-white py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-red/90 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
+              >
+                View Live Tracker
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    let eventDate = new Date();
+                    if (confirmedBookingDetails.scheduledAt) {
+                      if (typeof confirmedBookingDetails.scheduledAt.toDate === 'function') {
+                        eventDate = confirmedBookingDetails.scheduledAt.toDate();
+                      } else {
+                        eventDate = new Date(confirmedBookingDetails.scheduledAt);
+                      }
+                    }
+
+                    const formatICSDate = (date: Date) => {
+                      const yyyy = date.getFullYear();
+                      const mm = String(date.getMonth() + 1).padStart(2, '0');
+                      const dd = String(date.getDate()).padStart(2, '0');
+                      const hh = String(date.getHours()).padStart(2, '0');
+                      const min = String(date.getMinutes()).padStart(2, '0');
+                      const ss = String(date.getSeconds()).padStart(2, '0');
+                      return `${yyyy}${mm}${dd}T${hh}${min}${ss}`;
+                    };
+
+                    const escapeText = (text: string) => {
+                      return text
+                        .replace(/\\/g, '\\\\')
+                        .replace(/;/g, '\\;')
+                        .replace(/,/g, '\\,')
+                        .replace(/\n/g, '\\n');
+                    };
+
+                    const startDate = eventDate;
+                    const endDate = new Date(startDate.getTime() + 30 * 60 * 1000); // 30 mins event duration
+
+                    const dtstamp = formatICSDate(new Date());
+                    const dtstart = formatICSDate(startDate);
+                    const dtend = formatICSDate(endDate);
+
+                    const title = `${confirmedBookingDetails.serviceName} - Silverback Barbershop`;
+                    const desc = `Your booking for ${confirmedBookingDetails.serviceName} is confirmed!\\n\\nReference: #${confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'LEGACY'}\\nPrice: R${confirmedBookingDetails.servicePrice || 0}\\nLocation: Klipfontein View Shop`;
+                    const loc = `Klipfontein View Shop, Midrand, South Africa`;
+
+                    const icsLines = [
+                      'BEGIN:VCALENDAR',
+                      'VERSION:2.0',
+                      'PRODID:-//Silverback Barbershop//NONSGML Calendar Event//EN',
+                      'CALSCALE:GREGORIAN',
+                      'METHOD:PUBLISH',
+                      'BEGIN:VEVENT',
+                      `UID:sb-booking-${confirmedBookingDetails.id || Math.random()}@silverbackbarbershop.com`,
+                      `DTSTAMP:${dtstamp}`,
+                      `DTSTART:${dtstart}`,
+                      `DTEND:${dtend}`,
+                      `SUMMARY:${escapeText(title)}`,
+                      `DESCRIPTION:${escapeText(desc)}`,
+                      `LOCATION:${escapeText(loc)}`,
+                      'STATUS:CONFIRMED',
+                      'SEQUENCE:0',
+                      'END:VEVENT',
+                      'END:VCALENDAR'
+                    ];
+
+                    const icsContent = icsLines.join('\r\n');
+                    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `Silverback_Barber_Booking_${confirmedBookingDetails.id ? confirmedBookingDetails.id.slice(0, 5).toUpperCase() : 'Event'}.ics`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    console.error("Error generating ICS file:", e);
+                    alert("Could not generate Calendar Invite. Please try again.");
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 text-white/90 border border-white/5 py-4 rounded-2xl font-black uppercase tracking-[0.15em] text-xs transition-all active:scale-[0.98]"
+              >
+                <Calendar className="w-4 h-4 text-brand-blue" />
+                Add to Calendar (.ics)
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    <div className="max-w-7xl mx-auto px-6 relative z-10">
+        {/* Main Action Buttons (Front UX) */}
+        {bookingFlow === 'none' && !activeBooking && (
+          <div className="space-y-12 mb-16">
+            <div className="grid md:grid-cols-2 gap-8">
+              <motion.button
+                onClick={() => setBookingFlow('queue')}
+                whileHover={{ y: -5, scale: 1.01 }}
+                className="bg-brand-red text-white p-12 rounded-[3.5rem] shadow-2xl shadow-red-500/20 text-left relative overflow-hidden group border border-brand-red/50"
+              >
+                <div className="relative z-10">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="bg-white/20 p-2 rounded-xl backdrop-blur-md w-9 h-9 flex items-center justify-center">
+                      <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-5 h-5 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-80">Join Live Queue</span>
+                  </div>
+                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-4 leading-none">Walk-In <br/>Now</h3>
+                  <p className="text-white/70 text-xs font-bold font-serif italic mb-8 max-w-[240px]">Perfect for immediate service. Our automated system manages the line.</p>
+
+                  <div className="bg-black/20 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+                    <p className="text-[9px] font-black uppercase tracking-widest mb-2 opacity-60">Operating Hours</p>
+                    <div className="flex justify-between items-center text-[10px] font-bold">
+                      <span>Tue - Sun</span>
+                      <span className="text-white/40">|</span>
+                      <span>09:00 - 18:00</span>
+                    </div>
+                    <p className="text-[8px] mt-2 opacity-40 uppercase tracking-widest italic font-serif">Including Public Holidays</p>
+                  </div>
+                </div>
+                <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="absolute -bottom-12 -right-12 w-64 h-64 opacity-10 group-hover:scale-110 transition-transform duration-700 pointer-events-none object-contain" alt="SB Logo" referrerPolicy="no-referrer" />
+              </motion.button>
+
+              <motion.button
+                onClick={() => setBookingFlow('scheduled')}
+                whileHover={{ y: -5, scale: 1.01 }}
+                className="bg-white/5 border border-white/10 p-12 rounded-[3.5rem] text-left relative overflow-hidden group shadow-2xl shadow-black/40"
+              >
+                <div className="relative z-10">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="bg-brand-blue/20 p-2 rounded-xl backdrop-blur-md border border-brand-blue/30 w-9 h-9 flex items-center justify-center">
+                      <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-5 h-5 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/50">Priority Booking</span>
+                  </div>
+                  <h3 className="text-4xl md:text-5xl font-black uppercase mb-4 leading-none">Avoid <br/>The Line</h3>
+                  <p className="text-white/40 text-xs font-bold font-serif italic mb-8 max-w-[240px]">Secure your specific time slot in advance for zero wait time.</p>
+
+                  <div className="flex flex-wrap gap-2">
+                    <div className="bg-white/5 px-4 py-2 rounded-full border border-white/5 text-[9px] font-black uppercase tracking-widest text-brand-blue">No Waiting</div>
+                    <div className="bg-white/5 px-4 py-2 rounded-full border border-white/5 text-[9px] font-black uppercase tracking-widest text-white/40">Guaranteed Slot</div>
+                  </div>
+                </div>
+                <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="absolute -bottom-12 -right-12 w-64 h-64 opacity-5 group-hover:scale-110 transition-transform duration-700 pointer-events-none object-contain" alt="SB Logo" referrerPolicy="no-referrer" />
+              </motion.button>
+            </div>
+          </div>
+        )}
+
+        <div className="grid lg:grid-cols-2 gap-16 items-start">
+          <div className="className">
+            {bookingFlow === 'queue' ? (
+              <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg text-center">
+                <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
+                  <ChevronRight className="w-4 h-4 rotate-180" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
+                </button>
+                <div className="w-20 h-20 bg-brand-red/10 rounded-full flex items-center justify-center mx-auto mb-6 p-4">
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" className="w-12 h-12 object-contain brightness-0 invert" alt="Logo" referrerPolicy="no-referrer" />
+                </div>
+                <h3 className="text-3xl font-black uppercase tracking-tight">Rapid <span className="text-brand-red">Queue</span> Entry</h3>
+                <p className="text-white/40 text-xs italic font-serif">Instant walk-in. Pay now to lock your current position #{(queue.length + 1)} in line.</p>
+
+                <div className="space-y-4 text-left">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Select Service</p>
+                  <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+                    {SERVICES.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelectedService(s.id)}
+                        className={`p-6 rounded-2xl border text-left transition-all flex justify-between items-center ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
+                      >
+                        <div>
+                          <p className="font-black text-sm uppercase tracking-tight">{s.name}</p>
+                          <p className="text-[8px] opacity-60">{s.time} process • {s.desc}</p>
+                        </div>
+                        <span className="text-lg font-black italic">R{s.price}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 mt-8">
+                   <button
+                    disabled={!selectedService}
+                    onClick={() => createBooking('queue')}
+                    className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl flex items-center justify-center gap-3 active:scale-[0.98]"
+                  >
+                    Confirm Booking
+                  </button>
+                </div>
+              </motion.div>
+            ) : bookingFlow === 'scheduled' ? (
+              // We keep scheduled details unchanged, handled below
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8 bg-white/5 p-10 rounded-[3rem] border border-white/10 max-w-lg">
+              <button onClick={() => setBookingFlow('none')} className="text-white/40 flex items-center gap-2 hover:text-white transition-all mb-4">
+                <ChevronRight className="w-4 h-4 rotate-180" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
+              </button>
+              <h3 className="text-3xl font-black uppercase tracking-tight">Pick <span className="text-brand-blue">Scheduled</span> Time</h3>
+
+              <div className="space-y-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">1. Select Service</p>
+                <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
+                  {SERVICES.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => setSelectedService(s.id)}
+                      className={`p-4 rounded-2xl border text-left transition-all ${selectedService === s.id ? 'bg-brand-red border-brand-red text-white' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'}`}
+                    >
+                      <p className="font-black text-xs uppercase tracking-tight leading-tight mb-1">{s.name}</p>
+                      <p className="text-[8px] opacity-60">R{s.price} • {s.time}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">2. Select Date</p>
+                <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar">
+                  {nextDates.map(dateObj => (
+                    <button
+                      key={dateObj.full}
+                      onClick={() => setSelectedDate(dateObj.full)}
+                      className={`min-w-[70px] p-4 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 shrink-0 ${selectedDate === dateObj.full ? 'bg-brand-blue border-brand-blue text-white' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
+                    >
+                      <span className="text-[8px] font-black uppercase tracking-widest opacity-60">{dateObj.day}</span>
+                      <span className="text-xl font-black">{dateObj.date}</span>
+                      {dateObj.isToday && <span className="text-[6px] font-black uppercase tracking-[0.2em] bg-white/20 px-2 py-0.5 rounded-full">Today</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">3. Select Time</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {timeSlots.map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setSelectedTime(t)}
+                      className={`p-3 rounded-xl border text-[10px] font-black transition-all ${selectedTime === t ? 'bg-brand-blue border-brand-blue text-white' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+
+              <div className="pt-4 border-t border-white/5 mt-8">
+                 <div className="flex justify-between items-center mb-6">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Grand Total</span>
+                    <span className="text-3xl font-black text-white">R{(SERVICES.find(s => s.id === selectedService)?.price || 0)}</span>
+                 </div>
+
+                 <button
+                  disabled={!selectedService || (bookingFlow === 'scheduled' && !selectedTime)}
+                  onClick={() => createBooking(bookingFlow as any)}
+                  className="w-full bg-brand-red text-white py-6 rounded-2xl font-black uppercase tracking-[0.2em] text-sm hover:bg-brand-dark transition-all disabled:opacity-20 shadow-2xl shadow-red-500/20 flex items-center justify-center gap-3 active:scale-[0.98]"
+                >
+                  Confirm Booking
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            <div className="space-y-8">
+              {activeBooking && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white/10 backdrop-blur-xl border border-white/10 p-10 rounded-[3rem] relative overflow-hidden group shadow-2xl shadow-black/50">
+                  <div className="p-8 bg-white/5 rounded-[2rem] mb-8 border border-white/10">
+                    <div className="flex items-center gap-4 text-white/80 mb-6 bg-brand-red/10 p-4 rounded-xl border border-brand-red/20">
+                      <AlertCircle className="w-5 h-5 text-brand-red animate-bounce shrink-0" />
+                      <p className="text-[10px] font-black uppercase tracking-widest leading-relaxed">Arrive 10 minutes before session. Late arrivals auto-expire.</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-8 text-left">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Queue Pos</p>
+                        <p className="text-4xl font-black">{activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) + 1 || '...') : 'STA'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Est. Wait</p>
+                        <p className="text-4xl font-black">~{(activeBooking.type === 'queue' ? (queue.findIndex(b => b.id === activeBooking.id) * 15) : 0) || 5}m</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-white/5 border border-white/5 rounded-2xl p-5 mb-8 text-left">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-1">Active Scheduled Service</p>
+                      <p className="font-extrabold uppercase text-white tracking-tight">{activeBooking.serviceName}</p>
+                      <p className="text-[9px] text-white/40 uppercase mt-0.5">{activeBooking.type === 'queue' ? 'Walk-In Spot' : 'Priority Booking'}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-black italic text-brand-blue">R{activeBooking.totalPaid || 50}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black bg-brand-blue/15 border border-brand-blue/20 text-brand-blue uppercase px-4 py-1.5 rounded-full tracking-wider">
+                      Ref: #{activeBooking.id.slice(0, 5).toUpperCase()}
+                    </span>
+                    <button onClick={() => updateDoc(doc(db, 'bookings', activeBooking.id), { status: 'missed' })} className="text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-brand-red transition-all underline underline-offset-8">Cancel Appointment</button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Booking History & Favorite Services Section */}
+              <motion.div
+                initial={{ opacity: 0, y: 25 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/5 backdrop-blur-md border border-white/10 rounded-[3rem] p-8 md:p-10 relative overflow-hidden group shadow-2xl shadow-black/40 text-left"
+              >
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white/80">
+                      <History className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xl font-black uppercase tracking-tight">Booking History</h4>
+                      <p className="text-[9px] text-white/40 uppercase tracking-widest mt-0.5 font-bold">Your Past Appointments</p>
+                    </div>
+                  </div>
+
+                  {pastBookings.length > 0 && (
+                    <span className="text-[10px] font-black bg-white/10 px-3.5 py-1.5 rounded-full text-white/60 border border-white/5">
+                      {pastBookings.length} Total
+                    </span>
+                  )}
+                </div>
+
+                {/* Favorite / Recommended Services Ribbon */}
+                <div className="mb-8 p-5 bg-white/5 rounded-2xl border border-white/5">
+                  {favoriteServicesList.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-white/50 text-[10px] uppercase font-black tracking-wider">
+                        <Heart className="w-3.5 h-3.5 text-brand-red fill-brand-red animate-pulse shrink-0" />
+                        <span>Your Favorite Services</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {favoriteServicesList.slice(0, 2).map(({ service, count }) => (
+                          <div key={service.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between gap-3 group hover:border-brand-red/30 transition-all">
+                            <div>
+                                <p className="font-extrabold text-xs uppercase text-white truncate max-w-[120px]">{service.name}</p>
+                              <p className="text-[9px] text-white/40">{count} {count === 1 ? 'visit' : 'visits'}</p>
+                            </div>
+                            <button
+                              onClick={() => handleQuickRebook(service.id)}
+                              className="px-3 py-1.5 bg-brand-red hover:bg-brand-red/90 text-white font-black uppercase tracking-wider text-[8px] rounded-lg transition-all shadow-md flex items-center gap-1 shrink-0"
+                            >
+                              <Scissors className="w-2.5 h-2.5" />
+                              <span>Rebook</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-white/50 text-[10px] uppercase font-black tracking-wider">
+                        <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400 shrink-0" />
+                        <span>Popular Grooming Styles</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {[
+                          SERVICES.find(s => s.id === 'fade'),
+                          SERVICES.find(s => s.id === 'combo1')
+                        ].filter(Boolean).map((service: any) => (
+                          <div key={service.id} className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between gap-3 group hover:border-brand-blue/30 transition-all">
+                            <div>
+                                <p className="font-extrabold text-xs uppercase text-white truncate max-w-[120px]">{service.name}</p>
+                              <p className="text-[9px] text-white/40">R{service.price} • {service.time}</p>
+                            </div>
+                            <button
+                              onClick={() => handleQuickRebook(service.id)}
+                              className="px-3 py-1.5 bg-brand-blue/30 hover:bg-brand-blue text-white font-black uppercase tracking-wider text-[8px] rounded-lg transition-all border border-brand-blue/25 flex items-center gap-1 shrink-0"
+                            >
+                              <Calendar className="w-2.5 h-2.5" />
+                              <span>Book</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Booking list */}
+                <div className="space-y-4 max-h-[360px] overflow-y-auto pr-1 text-left scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                  {pastBookings.length > 0 ? (
+                    pastBookings.map((b) => {
+                      let displayStatus = b.status || 'completed';
+                      const isCancelled = ['missed', 'cancelled'].includes(displayStatus);
+
+                      let displayTimeStr = 'Previous Appointment';
+                      if (b.scheduledAt) {
+                        try {
+                          let d: Date;
+                          if (typeof b.scheduledAt.toDate === 'function') {
+                            d = b.scheduledAt.toDate();
+                          } else if (b.scheduledAt.seconds) {
+                            d = new Date(b.scheduledAt.seconds * 1000);
+                          } else {
+                            d = new Date(b.scheduledAt);
+                          }
+                          displayTimeStr = d.toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          });
+                        } catch (e) {
+                          displayTimeStr = String(b.scheduledAt);
+                        }
+                      } else if (b.createdAt) {
+                        try {
+                          let d: Date;
+                          if (typeof b.createdAt.toDate === 'function') {
+                            d = b.createdAt.toDate();
+                          } else if (b.createdAt.seconds) {
+                            d = new Date(b.createdAt.seconds * 1000);
+                          } else {
+                            d = new Date(b.createdAt);
+                          }
+                          displayTimeStr = d.toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric'
+                          }) + ' (Walk-In)';
+                        } catch (e) {}
+                      }
+
+                      return (
+                        <div key={b.id} className="p-4 rounded-2xl bg-white/5 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/10 transition-all border-l-2 hover:border-l-brand-blue duration-300">
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                              <Scissors className="w-4 h-4 text-white/50" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-extrabold text-sm uppercase tracking-tight text-white">{b.serviceName}</p>
+                                <span className={`text-[7px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${isCancelled ? 'bg-red-500/15 text-red-400 border border-red-500/10' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/10'}`}>
+                                  {displayStatus === 'missed' ? 'cancelled' : displayStatus}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-white/40 text-[10px] mt-0.5">
+                                <Calendar className="w-3 h-3 text-white/30" />
+                                <span>{displayTimeStr}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 border-white/5 pt-3.5 sm:pt-0 shrink-0">
+                            <span className="text-sm font-black italic text-white/70">R{b.totalPaid || 50}</span>
+
+                            {!isCancelled && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedReceiptBooking(b);
+                                  setShowReceiptModal(true);
+                                }}
+                                className="px-4 py-2 bg-white/5 hover:bg-brand-blue hover:text-white hover:border-brand-blue text-slate-300 font-bold uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 flex items-center gap-1 shadow-md cursor-pointer"
+                              >
+                                <Printer className="w-2.5 h-2.5" />
+                                <span>Receipt</span>
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleQuickRebook(b.serviceId || 'fade')}
+                              className="px-4 py-2 bg-white/5 hover:bg-brand-red hover:text-white hover:border-brand-red text-slate-300 font-bold uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 flex items-center gap-1 shadow-md"
+                            >
+                              <Scissors className="w-2.5 h-2.5" />
+                              <span>Rebook</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="py-12 text-center border border-dashed border-white/10 rounded-2xl flex flex-col items-center">
+                      <History className="w-8 h-8 text-white/10 mb-3" />
+                      <p className="text-white/30 font-black uppercase tracking-widest text-[9px] mb-1">No Past Bookings</p>
+                      <p className="text-white/25 text-[10px] max-w-[200px]">Book your first service and start earning loyalty cuts!</p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-[3rem] p-8 md:p-12 relative z-10 shadow-3xl shadow-black/80">
+            <div className="flex items-center justify-between mb-12">
+              <h4 className="text-xl font-black uppercase tracking-tight">Live Tracker</h4>
+              <div className="flex items-center gap-3 px-4 py-1.5 bg-green-500/20 text-green-500 rounded-full border border-green-500/20">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500"></div>
+                <span className="text-[9px] font-black uppercase tracking-[0.2em]">Operational</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {queue.length > 0 ? queue.slice(0, 5).map((entry, idx) => (
+                <motion.div
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  key={entry.id}
+                  className={`flex items-center justify-between p-6 rounded-3xl border transition-all ${idx === 0 ? 'bg-brand-blue border-brand-blue text-white shadow-2xl shadow-blue-500/40 relative z-20 overflow-hidden' : 'bg-white/5 border-white/5 text-white/60'}`}
+                >
+                  <div className="flex items-center gap-5">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${idx === 0 ? 'bg-white text-brand-blue' : 'bg-white/10'}`}>
+                      {idx + 1}
+                    </div>
+                    <div>
+                      <p className={`font-black uppercase tracking-tight ${idx === 0 ? 'text-white' : 'text-white'}`}>{entry.userName.split(' ')[0]}</p>
+                      <p className="text-[8px] font-bold uppercase tracking-[0.2em] opacity-60">{entry.serviceName}</p>
+                    </div>
+                  </div>
+                  {idx === 0 && (
+                    <div className="bg-white/20 px-4 py-1 rounded-xl">
+                      <span className="text-[9px] font-black uppercase tracking-widest">On Deck</span>
+                    </div>
+                  )}
+                </motion.div>
+              )) : (
+                <div className="py-24 text-center border-2 border-dashed border-white/10 rounded-[2rem] flex flex-col items-center">
+                  <img src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png" className="w-16 h-16 object-contain opacity-20 mb-6" alt="Logo" referrerPolicy="no-referrer" />
+                  <p className="text-white/20 font-black uppercase tracking-[0.4em] text-[10px]">Queue Standby</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Improved Loyalty Section */}
+          <motion.div
+            whileHover={{ rotate: 0, y: -10 }}
+            initial={{ rotate: 2 }}
+            className="absolute -bottom-8 -right-4 lg:-right-12 z-20 bg-white p-8 rounded-[2.5rem] shadow-3xl w-[280px] border border-slate-100"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-brand-red/10 flex items-center justify-center">
+                  <Trophy className="w-4 h-4 text-brand-red" />
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-900">Loyalty Stamps</span>
+              </div>
+              <div className="text-right">
+                <span className="text-xl font-black text-brand-red">{profile?.stamps || 0}<span className="text-[10px] text-slate-300">/10</span></span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-5 gap-3 mb-8">
+              {[...Array(10)].map((_, i) => (
+                <div key={i} className="relative">
+                  <div className={`aspect-square rounded-xl border-2 flex items-center justify-center transition-all ${i < (profile?.stamps || 0) ? 'bg-brand-red border-brand-red text-white' : 'border-slate-100 bg-slate-50 text-slate-200'}`}>
+                    {i < (profile?.stamps || 0) ? <Scissors className="w-3 h-3" /> : <div className="w-1 h-1 bg-current rounded-full" />}
+                  </div>
+                  {(i === 4 || i === 9) && (
+                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-yellow-400 rounded-full border-2 border-white flex items-center justify-center">
+                      <Zap className="w-2 h-2 text-white fill-white" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <div className={`p-3 rounded-2xl flex items-center justify-between border transition-all ${profile?.stamps >= 5 ? 'bg-green-50 border-green-100' : 'bg-slate-50 border-transparent'}`}>
+                <p className={`text-[8px] font-black uppercase tracking-widest ${profile?.stamps >= 5 ? 'text-green-600' : 'text-slate-400'}`}>5 Fills: Free Cap</p>
+                {profile?.stamps >= 5 ? <CheckCircle2 className="w-3 h-3 text-green-600" /> : <div className="w-3 h-3 border border-slate-200 rounded-full" />}
+              </div>
+              <div className={`p-3 rounded-2xl flex items-center justify-between border transition-all ${profile?.stamps >= 10 ? 'bg-brand-blue/5 border-brand-blue/10' : 'bg-slate-50 border-transparent'}`}>
+                <p className={`text-[8px] font-black uppercase tracking-widest ${profile?.stamps >= 10 ? 'text-brand-blue' : 'text-slate-400'}`}>10 Fills: Free Haircut</p>
+                {profile?.stamps >= 10 ? <CheckCircle2 className="w-3 h-3 text-brand-blue" /> : <div className="w-3 h-3 border border-slate-200 rounded-full" />}
+              </div>
+            </div>
+
+            {profile && (
+              <button
+                onClick={() => setShowQRModal(true)}
+                className="w-full mt-4 flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-brand-red text-white font-black uppercase tracking-widest text-[8px] rounded-2xl transition-all shadow-md active:scale-[0.98]"
+              >
+                <QrCode className="w-3.5 h-3.5 text-white animate-pulse" />
+                <span>Show Check-In QR</span>
+              </button>
+            )}
+          </motion.div>
+        </div>
+      </div>
+    </div>
+  </section>
+);
+};
+
+// --- Newsletter / Welcome Section ---
+
+export default BookingSystem;

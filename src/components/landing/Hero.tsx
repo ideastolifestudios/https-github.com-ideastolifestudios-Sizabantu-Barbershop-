@@ -1,0 +1,80 @@
+import React from 'react';
+import { motion, useScroll, useTransform } from 'motion/react';
+import { Scissors, ArrowRight, ShieldCheck, Trophy, Users, Zap } from 'lucide-react';
+import { LiveStatus } from '../ui/LiveStatus';
+
+export const Hero = () => {
+  const { scrollY } = useScroll();
+  const y1 = useTransform(scrollY, [0, 500], [0, 200]);
+  const opacity = useTransform(scrollY, [0, 300], [1, 0]);
+
+  return (
+    <section className="relative min-h-screen bg-slate-900 flex items-center justify-center overflow-hidden pt-20">
+      {/* Background Video with Parallax and technical overlay */}
+      <motion.div
+        style={{ y: y1, opacity }}
+        className="absolute inset-0 z-0"
+      >
+        <img
+          src="https://res.cloudinary.com/dk8jbgjhl/image/upload/q_auto,f_auto/v1777916389/WhatsApp_Image_2026-04-22_at_21.13.26_t3c8ji.jpg"
+          alt="Hero Background"
+          className="w-full h-full object-cover scale-110 grayscale-[60%] opacity-50"
+          referrerPolicy="no-referrer"
+        />
+        <div className="absolute inset-0 bg-slate-900/15 backdrop-blur-[1px]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-900/20 via-60% to-slate-900"></div>
+        {/* Dynamic mesh pattern */}
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30"></div>
+      </motion.div>
+
+      <div className="max-w-7xl mx-auto px-6 relative z-10 w-full text-center mt-36 md:mt-48">
+        <motion.div
+           initial={{ opacity: 0, y: 30 }}
+           animate={{ opacity: 1, y: 0 }}
+           transition={{ duration: 1, ease: "easeOut" }}
+           className="flex flex-col items-center"
+        >
+          <div className="flex flex-col sm:flex-row gap-4 mt-20 justify-center items-center">
+            <motion.a
+              href="#book"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="bg-brand-red text-white px-8 py-3.5 rounded-full font-bold uppercase tracking-[0.2em] text-[11px] text-center shadow-lg relative overflow-hidden group min-w-[200px] flex items-center justify-center"
+            >
+              <div className="relative z-10 flex items-center justify-center gap-2">
+                <Zap className="w-3.5 h-3.5 fill-white text-white" />
+                <span>Quick Book Now</span>
+              </div>
+              <motion.div
+                animate={{ x: ["-100%", "100%"] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12"
+              />
+            </motion.a>
+
+            <motion.a
+              href="#pricing"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="bg-white/5 backdrop-blur-md border border-white/10 text-white px-8 py-3.5 rounded-full font-bold uppercase tracking-[0.2em] text-[11px] text-center hover:bg-white/10 transition-all relative group min-w-[200px] flex items-center justify-center"
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span>View All Services</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </motion.a>
+          </div>
+
+          <LiveStatus centered={true} />
+        </motion.div>
+      </div>
+
+      {/* Decorative Elements */}
+      <div className="absolute bottom-12 left-6 z-20 hidden lg:flex items-center gap-6 text-white">
+        <div className="w-12 h-px bg-white/20"></div>
+        <p className="text-[10px] font-black uppercase tracking-widest text-white/20">Based in Gauteng, South Africa</p>
+      </div>
+    </section>
+  );
+};
+export default Hero;

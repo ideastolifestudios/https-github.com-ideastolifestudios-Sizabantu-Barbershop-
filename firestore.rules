@@ -14,29 +14,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function existingData() {
-      return resource.data;
-    }
-
-    function incomingData() {
-      return request.resource.data;
-    }
-
-    function getUserData(uid) {
-      return get(/databases/$(database)/documents/users/$(uid)).data;
-    }
-
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email == 'cbrprints22@gmail.com' || 
-        request.auth.token.email == 'sizabantubarbershop@gmail.com' || 
-        (request.auth.token.email != null && request.auth.token.email.matches('.*@sizabantubarbershop\\.co\\.za$')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     // ---------------------------------------------------------
@@ -49,11 +31,12 @@ service cloud.firestore {
     }
 
     match /system/ping {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false; // Remove public write
     }
 
-    match /test/connection {
-      allow read: if true;
+    match /otp_sessions/{email} {
+      allow read, write: if false; // Server-side only
     }
 
     // USERS

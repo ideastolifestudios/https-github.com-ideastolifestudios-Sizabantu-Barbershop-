@@ -1,0 +1,1139 @@
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import { Scissors, Clock, CheckCircle2, ChevronRight, Zap, QrCode, ShieldCheck, Trophy, Calendar, Users, X, MapPin, Phone, Mail, Instagram, MessageSquare, Star, Send, ExternalLink, User, LogOut, Settings, Trash2, RefreshCcw, Bell, Camera, History, Heart, Scan, Printer, Download, HelpCircle, ChevronDown, Search, Sparkles, Filter, AlertCircle } from "lucide-react";
+import { doc, collection, query, where, onSnapshot, addDoc, serverTimestamp, Timestamp, getDocs, updateDoc, deleteDoc, orderBy, limit, getDoc, setDoc } from "firebase/firestore";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { db, auth } from "../../lib/firebase";
+import { handleDownloadPDF } from "../../lib/receipt";
+import { triggerToast } from "../../hooks/useAppointmentReminders";
+import { useAuth } from "../../hooks/useAuth";
+
+export const AdminDashboard = () => {
+const [activeTab, setActiveTab] = useState<'queue' | 'scheduled' | 'checkin'>('queue');
+const [bookings, setBookings] = useState<any[]>([]);
+const { handleFirestoreError } = useAuth();
+
+// In-Person Check-In Desk States
+const [allUsers, setAllUsers] = useState<any[]>([]);
+const [scannedUserId, setScannedUserId] = useState('');
+const [lookedUpUser, setLookedUpUser] = useState<any | null>(null);
+const [lookupError, setLookupError] = useState('');
+const [stampSuccessMsg, setStampSuccessMsg] = useState('');
+const [simulatingScan, setSimulatingScan] = useState(false);
+
+// Rescheduling States
+const [reschedulingBookingId, setReschedulingBookingId] = useState<string | null>(null);
+const [rescheduleDate, setRescheduleDate] = useState<string>('');
+const [rescheduleTime, setRescheduleTime] = useState<string>('');
+
+// Receipt States
+const [selectedReceiptBooking, setSelectedReceiptBooking] = useState<any | null>(null);
+const [showReceiptModal, setShowReceiptModal] = useState(false);
+const [bookingToComplete, setBookingToComplete] = useState<any | null>(null);
+
+
+// Workspace automation states
+const [wsStatus, setWsStatus] = useState<any>({ linked: false, loading: true });
+const [calIdInput, setCalIdInput] = useState('primary');
+const [mailEnabled, setMailEnabled] = useState(true);
+const [smsEnabled, setSmsEnabled] = useState(true);
+const [contactsEnabled, setContactsEnabled] = useState(true);
+const [onboardingEnabled, setOnboardingEnabled] = useState(true);
+const [testing, setTesting] = useState(false);
+const [saving, setSaving] = useState(false);
+
+const fetchWorkspaceStatus = async () => {
+  try {
+    const res = await fetch('/api/workspace/status');
+    if (res.ok) {
+      const data = await res.json();
+      setWsStatus(data);
+      if (data.linked) {
+        setCalIdInput(data.calendarId || 'primary');
+        setMailEnabled(data.emailEnabled !== false);
+        setSmsEnabled(data.smsEnabled !== false);
+        setContactsEnabled(data.contactsEnabled !== false);
+        setOnboardingEnabled(data.onboardingEnabled !== false);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load workspace status:", e);
+  }
+};
+
+useEffect(() => {
+  const q = query(
+    collection(db, 'bookings'),
+    where('status', 'in', ['pending', 'confirmed', 'checked-in', 'in-progress']),
+    orderBy('createdAt', 'desc')
+  );
+
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+  }, (error) => handleFirestoreError(error, 'list' as any, 'bookings'));
+
+  const qUsers = query(
+    collection(db, 'users'),
+    orderBy('createdAt', 'desc'),
+    limit(50)
+  );
+
+  const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
+    setAllUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+  }, (error) => console.error("Error loading users for admin:", error));
+
+  fetchWorkspaceStatus();
+
+  return () => {
+    unsubscribe();
+    unsubscribeUsers();
+  };
+}, []);
+
+const updateStatus = async (id: string, status: string) => {
+  await updateDoc(doc(db, 'bookings', id), { status, updatedAt: serverTimestamp() });
+};
+
+const sendPing = async (userId: string, message: string) => {
+  await fetch(`/api/notify/${userId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message })
+  });
+};
+
+const cancelBooking = async (id: string) => {
+  await deleteDoc(doc(db, 'bookings', id));
+};
+
+const handleReschedule = async (booking: any, dateStr: string, timeStr: string) => {
+  if (!dateStr || !timeStr) {
+    alert("Please select both a date and a time.");
+    return;
+  }
+
+  try {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const [hours, minutes] = timeStr.split(':').map(Number);
+
+    const newDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    const newTimestamp = Timestamp.fromDate(newDate);
+
+    // Update in Firestore
+    await updateDoc(doc(db, 'bookings', booking.id), {
+      scheduledAt: newTimestamp,
+      updatedAt: serverTimestamp()
+    });
+
+    // Clear selecting state
+    setReschedulingBookingId(null);
+
+    // Formatted date string for user friendly email
+    const formattedDateTime = newDate.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    // Trigger notification email to client
+    await sendPing(
+      booking.userId,
+      `Your appointment for ${booking.serviceName} has been rescheduled to ${formattedDateTime}.`
+    );
+
+    alert(`Appointment rescheduled successfully to ${formattedDateTime}. Client has been notified.`);
+  } catch (err: any) {
+    console.error("Rescheduling error:", err);
+    alert("Failed to reschedule: " + err.message);
+  }
+};
+
+const handleLookupUser = async (idToLookup: string) => {
+  if (!idToLookup.trim()) {
+    setLookupError("Please enter or scan a User ID");
+    return;
+  }
+  setLookupError('');
+  setStampSuccessMsg('');
+  try {
+    const userRef = doc(db, 'users', idToLookup.trim());
+    const uDoc = await getDoc(userRef);
+    if (uDoc.exists()) {
+      setLookedUpUser({ id: uDoc.id, ...uDoc.data() });
+    } else {
+      setLookupError(`User ID "${idToLookup.trim()}" not found in database`);
+      setLookedUpUser(null);
+    }
+  } catch (err: any) {
+    setLookupError("Failed to lookup: " + err.message);
+    setLookedUpUser(null);
+  }
+};
+
+const handleAddStampByAdmin = async (userId: string, currentStamps: number) => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const newStampCount = (currentStamps || 0) + 1;
+
+    let updatedRewards = lookedUpUser?.rewardsUnlocked || [];
+    if (newStampCount === 5 && !updatedRewards.includes('cap')) {
+      updatedRewards.push('cap');
+    }
+    if (newStampCount === 10 && !updatedRewards.includes('haircut')) {
+      updatedRewards.push('haircut');
+    }
+
+    await updateDoc(userRef, {
+      stamps: newStampCount,
+      rewardsUnlocked: updatedRewards
+    });
+
+    setLookedUpUser((prev: any) => prev ? { ...prev, stamps: newStampCount, rewardsUnlocked: updatedRewards } : null);
+    setStampSuccessMsg(`Stamps successfully added for client! Current: ${newStampCount}/10`);
+    setTimeout(() => setStampSuccessMsg(''), 4000);
+  } catch (err: any) {
+    alert("Failed to add stamp: " + err.message);
+  }
+};
+
+const handleResetStampsByAdmin = async (userId: string) => {
+  if (!confirm("Reset loyalty stamps? This is irreversible.")) return;
+  try {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, { stamps: 0, rewardsUnlocked: [] });
+    setLookedUpUser((prev: any) => prev ? { ...prev, stamps: 0, rewardsUnlocked: [] } : null);
+    setStampSuccessMsg("Loyalty stamps reset to 0.");
+    setTimeout(() => setStampSuccessMsg(''), 4000);
+  } catch (err: any) {
+    alert("Failed to reset stamps: " + err.message);
+  }
+};
+
+const handleCheckInAndQueue = async (userObj: any) => {
+  try {
+    await addDoc(collection(db, 'bookings'), {
+      userId: userObj.id || userObj.uid,
+      userName: userObj.displayName,
+      userEmail: userObj.email,
+      serviceId: 'fade',
+      serviceName: 'In-Shop Entry Haircut',
+      type: 'queue',
+      status: 'checked-in',
+      totalPaid: 50,
+      createdAt: serverTimestamp()
+    });
+    alert(`Customer ${userObj.displayName} successfully added to the live queue!`);
+  } catch (err: any) {
+    alert("Failed to create check-in session: " + err.message);
+  }
+};
+
+const handleLinkWorkspace = async () => {
+  try {
+    const workspaceProvider = new GoogleAuthProvider();
+    workspaceProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+    workspaceProvider.addScope('https://www.googleapis.com/auth/calendar');
+    workspaceProvider.addScope('https://www.googleapis.com/auth/gmail.send');
+    workspaceProvider.addScope('https://www.googleapis.com/auth/contacts');
+
+    const result = await signInWithPopup(auth, workspaceProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      await setDoc(doc(db, 'settings', 'google_workspace'), {
+        accessToken: credential.accessToken,
+        calendarId: calIdInput || 'primary',
+        emailEnabled: mailEnabled,
+        smsEnabled: smsEnabled,
+        contactsEnabled: contactsEnabled,
+        linkedBy: result.user.email,
+        linkedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3500 * 1000).toISOString(),
+        status: 'active'
+      }, { merge: true });
+
+      alert("Successfully linked with Google Workspace! Automated calendars, email invites, and automatic contact syncing authorized.");
+      await fetchWorkspaceStatus();
+    } else {
+      alert("Failed to extract Workspace Access Token.");
+    }
+  } catch (error: any) {
+    console.error("Workspace Auth Error:", error);
+    if (error.code === 'auth/popup-blocked') {
+      alert("Authorization popup was blocked. Please enable popups in your browser to sign into Google.");
+    } else {
+      alert("Workspace auth error: " + error.message);
+    }
+  }
+};
+
+const handleSaveConfig = async () => {
+  setSaving(true);
+  try {
+    const res = await fetch('/api/workspace/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        calendarId: calIdInput,
+        emailEnabled: mailEnabled,
+        smsEnabled: smsEnabled,
+        contactsEnabled: contactsEnabled,
+        onboardingEnabled: onboardingEnabled
+      })
+    });
+    if (res.ok) {
+      alert("Workspace configuration synced successfully!");
+      await fetchWorkspaceStatus();
+    } else {
+      alert("Failed to save workspace configuration.");
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setSaving(false);
+  }
+};
+
+const handleTriggerTest = async () => {
+  setTesting(true);
+  try {
+    const res = await fetch('/api/workspace/test', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      alert(data.message || "Test completed successfully! Google Calendar invite created, confirmation email dispatched, and client added as Google Contact.");
+    } else {
+      alert(data.error || "Sandbox testing failed. Check if Google connection is active.");
+    }
+  } catch (error) {
+    alert("Test request failed: " + (error as Error).message);
+  } finally {
+    setTesting(false);
+  }
+};
+
+const filteredBookings = bookings.filter(b => b.type === activeTab);
+
+return (
+  <>
+    <section className="py-24 bg-white text-slate-900 border-t border-slate-100">
+    <div className="max-w-7xl mx-auto px-6">
+      <div className="flex flex-col lg:flex-row justify-between items-start gap-12 mb-16">
+        <div className="max-w-md">
+          <span className="text-brand-red font-black uppercase tracking-[0.4em] text-[10px] mb-4 block">Command Center</span>
+          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-4">Barber <span className="text-brand-blue italic font-serif lowercase tracking-normal">Hub</span></h2>
+          <p className="text-slate-400 text-sm leading-relaxed">Queue control and session management. Google Workspace auto-syncs confirmation invites and reminders.</p>
+        </div>
+
+        <div className="w-full lg:w-auto space-y-4">
+          <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 flex items-center justify-center">
+            <div className="text-center">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Queue Management</p>
+              <p className="text-[8px] font-black uppercase tracking-widest text-brand-blue animate-pulse">Monitoring Live Sessions</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+        {/* Main Bookings List Column (Left, large) */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100 w-fit">
+            <button onClick={() => setActiveTab('queue')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'queue' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Live Queue</button>
+            <button onClick={() => setActiveTab('scheduled')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'scheduled' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Scheduled</button>
+            <button onClick={() => setActiveTab('checkin')} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'checkin' ? 'bg-white text-brand-red shadow-sm' : 'text-slate-400'}`}>Check-In Desk</button>
+          </div>
+
+          {activeTab === 'checkin' ? (
+            <div className="space-y-6">
+              <div className="bg-slate-50 border border-slate-100 p-8 rounded-[2.5rem] space-y-6 text-left">
+                <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                    <Scan className="w-5 h-5 text-brand-blue" />
+                    In-Person Check-In & Stamp Counter
+                  </h3>
+                  <p className="text-xs text-slate-400">Scan member QR codes or lookup manually with User ID to immediately check them in and stamp their loyalty cards.</p>
+                </div>
+
+                {/* Manual input & QR Code Scanning Entry Simulator */}
+                <form onSubmit={(e) => { e.preventDefault(); handleLookupUser(scannedUserId); }} className="space-y-4">
+                  <div className="space-y-1.5 text-left">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">User System ID (Physical QR Scan or Copy-Paste)</label>
+                    <div className="flex gap-3">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={scannedUserId}
+                          onChange={(e) => setScannedUserId(e.target.value)}
+                          placeholder="e.g. u7bYtXz26bMcp91W"
+                          className="w-full bg-white text-slate-800 text-xs px-5 py-4 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold font-mono"
+                        />
+                        <span className="absolute right-3 top-3.5 text-[8px] font-black uppercase text-slate-300 pointer-events-none">ID INPUT</span>
+                      </div>
+                      <button
+                        type="submit"
+                        className="px-6 py-4 bg-slate-900 hover:bg-brand-red text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-[0.98]"
+                      >
+                        Lookup Client
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                {/* Simulated Scanner Laser overlay & Shortcuts */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-white border border-slate-200/60 p-5 rounded-2xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-brand-blue mb-1 block">Live QR Code Scanner Sim</span>
+                      <p className="text-[10px] text-slate-400 leading-relaxed mb-3">Simulate checking-in with an active mobile camera scan feed in the barber shop.</p>
+                    </div>
+
+                    {simulatingScan ? (
+                      <div className="relative aspect-[4/3] max-w-[180px] bg-black rounded-xl overflow-hidden mb-4 mx-auto flex items-center justify-center border-2 border-brand-red">
+                        <div className="absolute top-0 left-0 w-full h-0.5 bg-brand-red animate-bounce"></div>
+                        <span className="text-[8px] font-black text-white/50 uppercase tracking-widest animate-pulse">Running Scan...</span>
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (allUsers.length === 0) {
+                          alert("No clients have registered yet. Register a client first to test scanning.");
+                          return;
+                        }
+                        setSimulatingScan(true);
+                        // Select a random user to mock scan
+                        const randomUser = allUsers[Math.floor(Math.random() * allUsers.length)];
+                        setTimeout(() => {
+                          setSimulatingScan(false);
+                          setScannedUserId(randomUser.id);
+                          handleLookupUser(randomUser.id);
+                        }, 1200);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-brand-blue/10 border border-brand-blue/20 hover:bg-brand-blue/20 text-brand-blue font-black uppercase tracking-widest text-[8px] rounded-xl transition-all"
+                    >
+                      <Scan className={`w-3.5 h-3.5 ${simulatingScan ? 'animate-spin' : ''}`} />
+                      <span>{simulatingScan ? 'Scanning Code...' : 'Simulate Camera QR Scan'}</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-white border border-slate-200/60 p-5 rounded-2xl">
+                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Quick Client Select</span>
+                    <p className="text-[10px] text-slate-400 mb-3">Or click any registered clients from the list below to fill the ID slot instantly:</p>
+
+                    <div className="space-y-2 max-h-[110px] overflow-y-auto pr-1">
+                      {allUsers.length > 0 ? (
+                        allUsers.map(u => (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => {
+                              setScannedUserId(u.id);
+                              setLookedUpUser(u);
+                              setLookupError('');
+                              setStampSuccessMsg('');
+                            }}
+                            className="w-full py-2 px-3 text-left bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 font-bold text-[10px] text-slate-700 flex justify-between items-center transition-all"
+                          >
+                            <span className="truncate max-w-[120px] uppercase font-bold">{u.displayName}</span>
+                            <span className="font-mono text-[7px] text-slate-400">{u.id.slice(0, 6)}...</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-[9px] text-slate-300 italic">No registered clients found</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {lookupError && (
+                  <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] font-black uppercase tracking-widest text-center">
+                    {lookupError}
+                  </div>
+                )}
+
+                {stampSuccessMsg && (
+                  <div className="p-4 bg-green-50 border border-green-100 rounded-xl text-green-600 text-[10px] font-black uppercase tracking-widest text-center">
+                    {stampSuccessMsg}
+                  </div>
+                )}
+
+                {/* Looked Up User profile Details & Operations */}
+                {lookedUpUser && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-6 bg-slate-900 text-white rounded-[2rem] border border-slate-800 space-y-6"
+                  >
+                    <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                      <div>
+                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Scanned Profile</p>
+                        <h4 className="text-xl font-black uppercase tracking-tight text-white">{lookedUpUser.displayName}</h4>
+                        <span className="text-[9px] text-slate-300 font-mono select-all font-bold">UID: {lookedUpUser.id}</span>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Loyalty Level</p>
+                        <span className="text-xl font-black text-brand-red">{lookedUpUser.stamps || 0}<span className="text-xs text-white/30">/10 Fills</span></span>
+                      </div>
+                    </div>
+
+                    {/* Display stamps array style */}
+                    <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 p-4 bg-white/5 rounded-xl border border-white/5">
+                      {[...Array(10)].map((_, i) => (
+                        <div key={i} className={`aspect-square rounded-lg border flex items-center justify-center text-[10px] font-black ${i < (lookedUpUser.stamps || 0) ? 'bg-brand-red border-brand-red text-white' : 'border-white/10 text-white/20 bg-white/5'}`}>
+                          {i < (lookedUpUser.stamps || 0) ? <Scissors className="w-2.5 h-2.5" /> : i+1}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleAddStampByAdmin(lookedUpUser.id, lookedUpUser.stamps)}
+                        className="py-3 px-4 bg-brand-red hover:bg-brand-red/90 text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                      >
+                        <Trophy className="w-3.5 h-3.5" />
+                        <span>Add 1 Stamp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCheckInAndQueue(lookedUpUser)}
+                        className="py-3 px-4 bg-brand-blue hover:bg-brand-blue/90 text-white font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                      >
+                        <Scan className="w-3.5 h-3.5" />
+                        <span>Check In Queue</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleResetStampsByAdmin(lookedUpUser.id)}
+                        className="py-3 px-4 bg-white/5 hover:bg-red-600/30 text-slate-300 hover:text-white font-black uppercase tracking-widest text-[8px] rounded-xl transition-all border border-white/10 active:scale-95 text-center"
+                      >
+                        Reset Stamps
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* All Users Directory */}
+              <div className="bg-white border border-slate-100 p-8 rounded-[2.5rem] shadow-sm text-left">
+                <div className="mb-4">
+                  <h4 className="text-sm font-black uppercase tracking-wider text-slate-800">Sizabantu Client Directory</h4>
+                  <p className="text-[10px] text-slate-400">Manage stamp counts and quick check-ins for the active customer database.</p>
+                </div>
+
+                <div className="grid gap-3 max-h-[300px] overflow-y-auto pr-1">
+                  {allUsers.length > 0 ? (
+                    allUsers.map((client) => (
+                      <div key={client.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <p className="font-extrabold uppercase text-slate-700 text-xs">{client.displayName}</p>
+                          <p className="text-[9px] text-slate-400 select-all font-mono">ID: {client.id} • {client.email}</p>
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-0 pt-2 sm:pt-0 border-slate-200">
+                          <span className="text-[10px] font-black bg-brand-red/10 text-brand-red border border-brand-red/10 px-3 py-1 rounded-xl">
+                            {client.stamps || 0}/10 Stamps
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScannedUserId(client.id);
+                              setLookedUpUser(client);
+                              setLookupError('');
+                              setStampSuccessMsg('');
+                            }}
+                            className="px-4 py-2 bg-white hover:bg-slate-950 hover:text-white border border-slate-200 text-slate-600 font-black uppercase tracking-widest text-[8px] rounded-xl transition-all"
+                          >
+                            Manage Stamps
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-slate-300 italic text-center py-6 text-xs">No registered clients found</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {filteredBookings.length > 0 ? filteredBookings.map((b) => (
+                <motion.div layout key={b.id} className="bg-white border border-slate-100 p-6 rounded-[2.5rem] shadow-sm flex flex-col gap-6 overflow-hidden group">
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-6 w-full">
+                    <div className="flex flex-col md:flex-row items-center gap-6 w-full md:w-auto">
+                      <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-brand-blue border border-slate-100 text-xl flex-shrink-0">
+                        {b.userName?.charAt(0)}
+                      </div>
+                      <div>
+                        <h4 className="font-black uppercase tracking-tight text-xl">{b.userName}</h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{b.serviceName} • {b.type === 'scheduled' ? (b.scheduledAt?.toDate?.()?.toLocaleDateString() + ' ' + b.scheduledAt?.toDate?.()?.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})) : 'Queue'}</p>
+
+                        {/* Real-time sync tracker badge indicators */}
+                        {b.workspaceSync ? (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                              b.workspaceSync.calendarSynced ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                            }`}>
+                              <Calendar className="w-2.5 h-2.5" /> GCal Link
+                            </span>
+                            <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                              b.workspaceSync.confirmationEmailSent ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                            }`}>
+                              <Mail className="w-2.5 h-2.5" /> Client Email
+                            </span>
+                            <span className={`inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${
+                              b.workspaceSync.smsSent ? 'bg-green-50 border-green-100 text-green-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                            }`}>
+                              <MessageSquare className="w-2.5 h-2.5" /> Client SMS
+                            </span>
+                          </div>
+                        ) : b.type === 'scheduled' ? (
+                          <div className="mt-3 flex gap-1.5">
+                            <span className="inline-flex items-center gap-1.5 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border bg-slate-50 border-slate-100 text-slate-400">
+                              <RefreshCcw className="w-2.5 h-2.5 animate-spin" /> Workspace Active
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                      <div className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-[0.2em] border ${
+                        b.status === 'checked-in' ? 'bg-blue-50 border-blue-100 text-blue-500' :
+                        b.status === 'in-progress' ? 'bg-yellow-50 border-yellow-105 text-yellow-550' :
+                        b.status === 'confirmed' ? 'bg-green-50 border-green-100 text-green-500' :
+                        'bg-slate-50 border-transparent text-slate-400'
+                      }`}>
+                        {b.status.replace('-', ' ')}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => sendPing(b.userId, "Please prepare, your session is coming up soon.")} title="Ping Client" className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-blue hover:text-white transition-all"><Bell className="w-3.5 h-3.5" /></button>
+
+                        {b.type === 'scheduled' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (reschedulingBookingId === b.id) {
+                                setReschedulingBookingId(null);
+                              } else {
+                                let d = new Date();
+                                if (b.scheduledAt) {
+                                  if (typeof b.scheduledAt.toDate === 'function') {
+                                    d = b.scheduledAt.toDate();
+                                  } else if (b.scheduledAt.seconds) {
+                                    d = new Date(b.scheduledAt.seconds * 1000);
+                                  } else {
+                                    d = new Date(b.scheduledAt);
+                                  }
+                                }
+                                setRescheduleDate(d.toISOString().split('T')[0]);
+                                setRescheduleTime(d.toTimeString().split(' ')[0].slice(0, 5));
+                                setReschedulingBookingId(b.id);
+                              }
+                            }}
+                            title="Reschedule Booking"
+                            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-black uppercase text-[9px] transition-all border ${
+                              reschedulingBookingId === b.id
+                                ? 'bg-brand-red text-white border-brand-red'
+                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-900 hover:text-white hover:border-slate-900'
+                            }`}
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span className="text-[8px] font-black uppercase tracking-wider">Reschedule</span>
+                          </button>
+                        )}
+
+                        {b.status === 'confirmed' && (
+                          <button type="button" onClick={() => updateStatus(b.id, 'started')} className="flex items-center gap-2 px-5 py-2.5 bg-brand-blue text-white rounded-xl font-black uppercase text-[9px] hover:bg-slate-900 transition-all">
+                            <Scissors className="w-3.5 h-3.5" />
+                            Start
+                          </button>
+                        )}
+                        {b.status === 'started' && (
+                          <button type="button" onClick={() => setBookingToComplete(b)} className="flex items-center gap-2 px-5 py-2.5 bg-green-500 text-white rounded-xl font-black uppercase text-[9px] hover:bg-green-600 transition-all">
+                            <Trophy className="w-3.5 h-3.5" />
+                            Finish
+                          </button>
+                        )}
+                        {b.status === 'completed' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedReceiptBooking(b);
+                              setShowReceiptModal(true);
+                            }}
+                            className="flex items-center gap-1.5 px-4 py-2.5 bg-green-500 text-white rounded-xl font-black uppercase text-[9px] hover:bg-slate-900 transition-all shadow-md cursor-pointer"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span className="text-[8px] font-black uppercase tracking-wider">Receipt</span>
+                          </button>
+                        )}
+                        <button type="button" onClick={() => updateStatus(b.id, 'missed')} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {reschedulingBookingId === b.id && (
+                    <div className="w-full border-t border-slate-100 pt-6 mt-2 flex flex-col sm:flex-row items-end gap-4">
+                      <div className="flex-1 w-full text-left space-y-1.5">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Select New Date</label>
+                        <input
+                          type="date"
+                          value={rescheduleDate}
+                          onChange={(e) => setRescheduleDate(e.target.value)}
+                          className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold"
+                        />
+                      </div>
+                      <div className="flex-1 w-full text-left space-y-1.5">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Select New Time</label>
+                        <input
+                          type="time"
+                          value={rescheduleTime}
+                          onChange={(e) => setRescheduleTime(e.target.value)}
+                          className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-brand-blue font-bold"
+                        />
+                      </div>
+                      <div className="flex gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleReschedule(b, rescheduleDate, rescheduleTime)}
+                          className="flex-1 sm:flex-none px-6 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-widest text-[9px] shadow-sm hover:scale-[1.02] transition-all"
+                        >
+                          Save Change
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReschedulingBookingId(null)}
+                          className="flex-1 sm:flex-none px-5 py-3.5 bg-slate-100 text-slate-500 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-slate-200 transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )) : (
+                <div className="py-24 text-center border border-dashed border-slate-100 rounded-[3rem]">
+                  <AlertCircle className="w-12 h-12 text-slate-100 mx-auto mb-4" />
+                  <p className="text-slate-300 font-black uppercase tracking-[0.4em] text-[10px]">No sessions today</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Google Workspace Integration Side Column (Right, small) */}
+        <div className="bg-slate-50 border border-slate-100 p-8 rounded-[3rem] space-y-6 shadow-sm">
+          <div className="border-b border-slate-200/50 pb-6">
+            <span className="text-brand-blue font-black uppercase tracking-[0.3em] text-[8px] mb-2 block">Google Integration</span>
+            <h3 className="text-xl font-black uppercase tracking-tight">Workspace Panel</h3>
+            <p className="text-[11px] text-slate-400 leading-relaxed mt-1">Configure automated bookings on Google Cal and sync instant client messages/emails.</p>
+          </div>
+
+          {/* Connection Status Card */}
+          <div className="bg-white p-5 rounded-[2rem] border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Connection</span>
+              {wsStatus.linked ? (
+                <span className="inline-flex items-center gap-1.5 text-[8px] font-black bg-green-50 border border-green-100 text-green-600 uppercase tracking-widest px-2.5 py-1 rounded-xl">
+                  ● Connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-[8px] font-black bg-red-50 border border-red-100 text-red-500 uppercase tracking-widest px-2.5 py-1 rounded-xl animate-pulse">
+                  ● Disconnected
+                </span>
+              )}
+            </div>
+
+            {wsStatus.linked ? (
+              <div className="space-y-2 text-slate-400">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-300 mb-1">Authenticated Admin Account</p>
+                <p className="text-[11px] font-bold text-slate-700 break-all">{wsStatus.linkedBy}</p>
+                <div className="flex justify-between items-center text-[9px] mt-2 pt-2 border-t border-slate-100">
+                  <span>Authorized At:</span>
+                  <span className="font-bold text-slate-500">{wsStatus.linkedAt ? new Date(wsStatus.linkedAt).toLocaleDateString() : 'Active'}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400 leading-relaxed">Please authenticate Google Workspace using your Sizabantu Google Business account to enable Calendar & Gmail send scopes immediately.</p>
+            )}
+
+            <button
+              onClick={handleLinkWorkspace}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-brand-blue hover:bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider text-[9px] transition-all cursor-pointer shadow-sm"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              {wsStatus.linked ? 'Reconnect Google Account' : 'Connect Google Workspace'}
+            </button>
+          </div>
+
+          {/* Settings Settings Card */}
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 space-y-4">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Automation Services</span>
+
+            {/* Calendar ID Field */}
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Sizabantu Calendar ID</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={calIdInput || ''}
+                  onChange={(e) => setCalIdInput(e.target.value)}
+                  placeholder="primary"
+                  className="w-full bg-slate-50 text-slate-800 text-xs px-4 py-3 rounded-xl border border-slate-200/60 focus:outline-none focus:border-brand-blue font-bold"
+                />
+                <span className="absolute right-3 top-3 text-[8px] font-black uppercase text-slate-300 pointer-events-none">Default</span>
+              </div>
+            </div>
+
+             {/* Confirmation Emails Checkbox */}
+            <div className="flex items-center justify-between py-1.5 border-t border-b border-dashed border-slate-100">
+              <div>
+                <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Automated Email</label>
+                <span className="text-[9px] text-slate-400 block">Dispatch confirmation and checks</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={mailEnabled}
+                onChange={(e) => setMailEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+              />
+            </div>
+
+            {/* Onboarding Welcome Sequence Checkbox */}
+            <div className="flex items-center justify-between py-1.5 border-b border-dashed border-slate-100">
+              <div>
+                <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Onboarding welcome flow</label>
+                <span className="text-[9px] text-slate-400 block">Auto-welcome tips and 7-day review follow-up</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={onboardingEnabled}
+                onChange={(e) => setOnboardingEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+              />
+            </div>
+
+            {/* SMS Alerts Checkbox */}
+            <div className="flex items-center justify-between py-1.5 border-b border-dashed border-slate-100">
+              <div>
+                <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Simulated SMS Alerts</label>
+                <span className="text-[9px] text-slate-400 block">Dispatch 2hr pre-arrival alerts</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={smsEnabled}
+                onChange={(e) => setSmsEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+              />
+            </div>
+
+            {/* Contacts Sync Checkbox */}
+            <div className="flex items-center justify-between py-1.5">
+              <div>
+                <label className="text-[10px] font-black text-slate-700 block uppercase tracking-wider">Automated Contacts Sync</label>
+                <span className="text-[9px] text-slate-400 block">Link client as Google Contact on booking</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={contactsEnabled}
+                onChange={(e) => setContactsEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-200 text-brand-blue focus:ring-brand-blue cursor-pointer"
+              />
+            </div>
+
+            {/* Save Configuration Settings */}
+            <button
+              disabled={saving}
+              onClick={handleSaveConfig}
+              className="w-full py-3 bg-brand-red hover:bg-slate-900 text-white rounded-xl font-black uppercase tracking-wider text-[9px] transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            >
+              {saving ? 'Syncing...' : 'Save Workspace Config'}
+            </button>
+          </div>
+
+          {/* Test Sandbox Testing Sandbox Panel */}
+          {wsStatus.linked && (
+            <div className="bg-slate-100/50 p-5 rounded-[2rem] border border-dashed border-slate-200 text-center space-y-3">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Diagnostics Lab</span>
+              <p className="text-[10px] text-slate-400 leading-relaxed">Launch a live integration test sandbox. Failsafe diagnostics code will sync a test booking structure to your current Google account.</p>
+              <button
+                disabled={testing}
+                onClick={handleTriggerTest}
+                className="w-full flex items-center justify-center gap-1.5 py-2 px-4 bg-white hover:bg-slate-900 hover:text-white text-slate-600 rounded-xl font-black uppercase tracking-wider text-[8px] transition-all border border-slate-200 cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                <RefreshCcw className={`w-3 h-3 ${testing ? 'animate-spin' : ''}`} />
+                {testing ? 'Testing Engine...' : 'Run Diagnostics Test'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* Booking Completion Confirmation Modal */}
+  <AnimatePresence>
+    {bookingToComplete && (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[2030] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+      >
+        <motion.div
+          initial={{ scale: 0.95, y: 15 }}
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.95, y: 15 }}
+          className="max-w-md w-full bg-white border border-slate-100 rounded-[2rem] shadow-2xl relative overflow-hidden p-8 flex flex-col"
+        >
+          {/* Alert Indicator */}
+          <div className="mx-auto w-12 h-12 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mb-6">
+            <AlertCircle className="w-6 h-6 animate-pulse" />
+          </div>
+
+          <div className="text-center space-y-2 mb-6">
+            <h3 className="text-lg font-black uppercase tracking-tight text-slate-900">
+              Complete Booking?
+            </h3>
+            <p className="text-xs text-slate-400 font-medium leading-relaxed">
+              Please confirm that you want to complete this session. This action changes the booking status to completed and increments the client’s loyalty stamps.
+            </p>
+          </div>
+
+          {/* Quick Summary Card */}
+          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-3 mb-6 text-left">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Client Name</span>
+              <span className="text-xs font-bold text-slate-900">{bookingToComplete.userName}</span>
+            </div>
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Selected Service</span>
+              <span className="text-xs font-bold text-slate-900">{bookingToComplete.serviceName}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Total Price</span>
+              <span className="text-sm font-black font-mono text-brand-red">R{bookingToComplete.price || 0}</span>
+            </div>
+          </div>
+
+          {/* Loyalty Notice */}
+          <div className="border border-brand-blue/15 bg-brand-blue/5 rounded-2xl p-4 flex gap-3 text-left mb-8">
+            <Trophy className="w-4 h-4 text-brand-blue shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-wider text-slate-900">Loyalty Stamps +1</p>
+              <p className="text-[10px] text-slate-500 font-medium leading-relaxed mt-0.5">
+                At 5 stamps, this client will unlock a **Free Cap**, and at 10 stamps, a **Free Haircut**.
+              </p>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setBookingToComplete(null)}
+              className="flex-1 py-3 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const bId = bookingToComplete.id;
+                setBookingToComplete(null);
+                await updateStatus(bId, 'completed');
+              }}
+              className="flex-1 py-3 text-white bg-green-500 hover:bg-green-600 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer shadow-md"
+            >
+              Yes, complete
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+
+  {/* Transaction Receipt Modal for Admin Dashboard */}
+  <AnimatePresence>
+    {showReceiptModal && selectedReceiptBooking && (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[2020] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 text-slate-900"
+      >
+        <motion.div
+          initial={{ scale: 0.95, y: 15 }}
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.95, y: 15 }}
+          className="max-w-md w-full bg-[#f8f9fa] border-4 border-slate-200 rounded-[2rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
+        >
+          <div
+            id="printable-receipt-modal"
+            className="p-8 pb-4 text-left overflow-y-auto flex-1 font-mono text-slate-800"
+          >
+            {/* Receipt Header */}
+            <div className="text-center space-y-1 mb-6 border-b-2 border-dashed border-slate-300 pb-5">
+              <h3 className="text-xl font-black uppercase tracking-tight text-slate-950 font-sans">Sizabantu Barbershop</h3>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Premium Grooming Experience</p>
+              <p className="text-[8px] tracking-widest text-slate-400">ESTABLISHED IN 2022 • SOUTH AFRICA</p>
+              <div className="pt-2 text-[9px] text-slate-500 uppercase font-bold">
+                OFFICIAL CUSTOMER RECEIPT
+              </div>
+            </div>
+
+            {/* Booking & Transaction Meta */}
+            <div className="space-y-2 text-xs mb-6 border-b border-dashed border-slate-200 pb-5">
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold uppercase text-[10px]">Booking Ref:</span>
+                <span className="font-bold text-slate-900">#{selectedReceiptBooking.id.toUpperCase().slice(0, 10)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold uppercase text-[10px]">Date & Time:</span>
+                <span className="font-bold text-slate-900">
+                  {(() => {
+                    if (selectedReceiptBooking.scheduledAt) {
+                      try {
+                        let d: Date;
+                        if (typeof selectedReceiptBooking.scheduledAt.toDate === 'function') {
+                          d = selectedReceiptBooking.scheduledAt.toDate();
+                        } else if (selectedReceiptBooking.scheduledAt.seconds) {
+                          d = new Date(selectedReceiptBooking.scheduledAt.seconds * 1000);
+                        } else {
+                          d = new Date(selectedReceiptBooking.scheduledAt);
+                        }
+                        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                      } catch (e) {
+                        return String(selectedReceiptBooking.scheduledAt);
+                      }
+                    } else if (selectedReceiptBooking.createdAt) {
+                      try {
+                        let d: Date;
+                        if (typeof selectedReceiptBooking.createdAt.toDate === 'function') {
+                          d = selectedReceiptBooking.createdAt.toDate();
+                        } else if (selectedReceiptBooking.createdAt.seconds) {
+                          d = new Date(selectedReceiptBooking.createdAt.seconds * 1000);
+                        } else {
+                          d = new Date(selectedReceiptBooking.createdAt);
+                        }
+                        return d.toLocaleDateString() + ' (Walk-In)';
+                      } catch (e) {}
+                    }
+                    return 'Walk-In Session';
+                  })()}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold uppercase text-[10px]">Client Name:</span>
+                <span className="font-extrabold text-slate-900 uppercase">{selectedReceiptBooking.userName || 'Client (Direct Guest)'}</span>
+              </div>
+              {selectedReceiptBooking.verificationCode && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px]">Security Pin:</span>
+                  <span className="font-bold text-brand-red">{selectedReceiptBooking.verificationCode}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Items and Totals */}
+            <div className="mb-6">
+              <div className="flex justify-between font-bold text-[10px] text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-300">
+                <span>Selected Service</span>
+                <div className="flex gap-8">
+                  <span>QTY</span>
+                  <span>PRICE</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between text-xs py-3.5 border-b border-slate-200">
+                <span className="font-extrabold text-slate-900 uppercase truncate max-w-[180px]">
+                  {selectedReceiptBooking.serviceName || 'Premium Haircut'}
+                </span>
+                <div className="flex gap-11 shrink-0">
+                  <span>1</span>
+                  <span className="font-bold text-slate-950">R{selectedReceiptBooking.totalPaid || 50}</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 pt-4">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span className="font-bold uppercase text-[10px]">Subtotal:</span>
+                  <span>R{selectedReceiptBooking.totalPaid || 50}</span>
+                </div>
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span className="font-bold uppercase text-[10px]">Vat (15%):</span>
+                  <span>R0.00</span>
+                </div>
+                <div className="flex justify-between text-sm font-black text-slate-950 pt-2 border-t border-slate-300">
+                  <span className="uppercase text-[11px] tracking-wider">Grand Total:</span>
+                  <span className="text-[17px] font-sans font-black italic">R{selectedReceiptBooking.totalPaid || 50}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CSS Barcode sequence decoration */}
+            <div className="flex justify-center items-center gap-[1px] h-12 bg-white px-4 py-2 border border-slate-200 my-6">
+              {[...Array(35)].map((_, i) => {
+                const widthClass = i % 2 === 0 ? 'w-[1.5px]' : i % 3 === 0 ? 'w-[3px]' : i % 5 === 0 ? 'w-[4px]' : 'w-[1px]';
+                return (
+                  <div key={i} className={`h-full bg-slate-950 ${widthClass}`} />
+                );
+              })}
+            </div>
+
+            {/* Footer Greeting */}
+            <div className="text-center space-y-1.5 text-[9px] text-slate-400">
+              <p className="font-black text-slate-600 uppercase">Thank you for your valuable support!</p>
+              <p>Sizabantu Barbershop | Established 2022</p>
+              <p className="font-mono text-[7px] text-slate-300 mt-2">TRANS-ID: {selectedReceiptBooking.id.toUpperCase()}</p>
+            </div>
+          </div>
+
+          {/* Action utilities - hidden during browser print */}
+          <div className="no-print p-6 bg-slate-100 border-t border-slate-200 flex flex-col gap-2 rounded-b-[2rem]">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-blue text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Print Receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadPDF(selectedReceiptBooking)}
+                className="flex items-center justify-center gap-2 px-5 py-3.5 bg-brand-red text-white rounded-xl font-black uppercase tracking-wider text-[10px] shadow-sm hover:scale-[1.01] transition-all cursor-pointer focus:outline-none"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download PDF
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowReceiptModal(false);
+                setSelectedReceiptBooking(null);
+              }}
+              className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px] py-3.5 rounded-xl transition-all cursor-pointer focus:outline-none"
+            >
+              Close Receipt
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+</>
+);
+};
+
+export default AdminDashboard;

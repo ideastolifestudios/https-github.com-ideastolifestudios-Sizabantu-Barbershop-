@@ -1,0 +1,32 @@
+import React from 'react';
+import { motion } from 'motion/react';
+import { Star, ShieldCheck, Trophy, Heart } from 'lucide-react';
+
+export const Mission = () => {
+  return (
+    <section className="py-24 bg-white text-slate-900 relative overflow-hidden border-y border-slate-100">
+      <div className="max-w-7xl mx-auto px-6 relative z-10 text-center">
+        {/* Restored logo - Bigger, no transparency */}
+        <div className="flex justify-center mb-16">
+          <img
+            src="https://res.cloudinary.com/dggitwduo/image/upload/v1775631839/SB_BARBER_LOGO_evz0fu.png"
+            alt="SB Logo"
+            className="h-24 md:h-32 object-contain drop-shadow-xl"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="relative max-w-4xl mx-auto"
+        >
+          <p className="text-3xl md:text-5xl font-light italic font-serif leading-relaxed text-slate-700 mb-16">
+            "Our mission is to provide exceptional grooming experience by delivering superior service, building long lasting relationships and fostering a welcoming environment for people of all ages."
+          </p>
+        </motion.div>
+      </div>
+    </section>
+  );
+};
+export default Mission;

@@ -1,0 +1,67 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Camera } from 'lucide-react';
+
+export const LazyImage = ({
+  src,
+  alt,
+  className,
+  referrerPolicy = "no-referrer"
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  referrerPolicy?: React.HTMLAttributeReferrerPolicy;
+}) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const imgRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "120px" } // Load slightly before coming into view
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={imgRef} className="relative w-full h-full overflow-hidden bg-slate-50">
+      {/* Skeleton Shimmer */}
+      {!isLoaded && (
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-50 via-slate-100 to-slate-50 animate-pulse flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-brand-red/20 border-t-brand-red animate-spin" />
+        </div>
+      )}
+
+      {isInView ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          onLoad={() => setIsLoaded(true)}
+          className={`w-full h-full object-cover transition-all duration-1000 ease-out ${
+            isLoaded ? "opacity-100" : "opacity-0 scale-95"
+          } ${className || ""}`}
+          referrerPolicy={referrerPolicy}
+        />
+      ) : (
+        <div className="w-full h-full opacity-0" />
+      )}
+    </div>
+  );
+};
+
+
+// --- Portfolio Component (Enhanced Gallery) ---
+export default LazyImage;
