@@ -1,93 +1,101 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ---------------------------------------------------------
-    // GLOBAL HELPERS
-    // ---------------------------------------------------------
-    
-    function isSignedIn() {
+    // Admin role check
+    function isAdmin() {
+      return request.auth.token.role == 'admin';
+    }
+
+    // Owner check
+    function isOwner(ownerId) {
+      return request.auth.uid == ownerId;
+    }
+
+    // Staff check
+    function isStaff(staffId) {
+      return request.auth.uid == staffId;
+    }
+
+    // Authenticated check
+    function isAuthenticated() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    // Admin access - full read/write
+    match /admin/{document=**} {
+      allow read, write: if isAdmin();
     }
 
-    function existingData() {
-      return resource.data;
+    // Customers collection
+    match /customers/{customerId} {
+      // Customers can read their own data
+      allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
+      // Customers can write their own data
+      allow write: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
+      
+      // Bookings subcollection
+      match /bookings/{bookingId} {
+        allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin() || isStaff(resource.data.staffId));
+        allow write: if isAdmin();
+      }
+
+      // Reviews subcollection
+      match /reviews/{reviewId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.auth.uid == customerId;
+        allow write: if isAdmin();
+      }
     }
 
-    function incomingData() {
-      return request.resource.data;
-    }
-
-    function getUserData(uid) {
-      return get(/databases/$(database)/documents/users/$(uid)).data;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'cbrprints22@gmail.com' || 
-        request.auth.token.email == 'sizabantubarbershop@gmail.com' || 
-        (request.auth.token.email != null && request.auth.token.email.matches('.*@sizabantubarbershop\\.co\\.za$')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    // ---------------------------------------------------------
-    // COLLECTIONS
-    // ---------------------------------------------------------
-
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    match /system/ping {
-      allow read, write: if true;
-    }
-
-    match /test/connection {
-      allow read: if true;
-    }
-
-    // USERS
-    match /users/{userId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-    }
-
-    // BOOKINGS
+    // Bookings collection
     match /bookings/{bookingId} {
-      allow read: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || 
-        isAdmin() ||
-        resource.data.type == 'queue'
-      );
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.customerId || isAdmin() || isStaff(resource.data.staffId));
+      allow create: if isAuthenticated() && request.auth.uid == resource.data.customerId;
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.customerId && resource.data.status == 'pending');
       allow delete: if isAdmin();
     }
 
-    // QUEUE (Live Queue State)
-    match /queue/{queueId} {
-      allow read: if isSignedIn();
+    // Services collection
+    match /services/{serviceId} {
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 
-    // BARBERS
-    match /barbers/{barberId} {
-      allow read: if isSignedIn();
+    // Staff collection
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow read, write: if isStaff(staffId);
       allow write: if isAdmin();
     }
 
-    // SETTINGS
-    match /settings/{settingsId} {
+    // Revenue collection (admin only)
+    match /revenue/{revenueId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Loyalty collection
+    match /loyalty/{customerId} {
+      allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Referrals collection
+    match /referrals/{referralId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.referrerId || isAdmin());
+      allow create: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Settings collection (admin only)
+    match /settings/{document=**} {
       allow read, write: if isAdmin();
+    }
+
+    // Audit logs (admin only)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }
