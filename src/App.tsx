@@ -1,4 +1,5 @@
 import React, { Suspense, lazy } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { useAuth } from './hooks/useAuth';
 import { useAppointmentReminders } from './hooks/useAppointmentReminders';
 import NotificationCenter from './components/shared/NotificationCenter';
@@ -61,6 +62,7 @@ export default function App() {
         <Footer />
       </main>
       <BackToTop />
+      <Analytics />
     </div>
   );
 }
