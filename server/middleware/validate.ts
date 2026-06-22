@@ -78,7 +78,7 @@ export function validateBody<T>(schema: ZodSchema<T>) {
     const result = schema.safeParse(req.body);
 
     if (!result.success) {
-      const details = result.error.errors.map((e) => ({
+      const details = result.error.issues.map((e) => ({
         field: e.path.join('.') || 'body',
         message: e.message,
       }));
