@@ -1,93 +1,158 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ---------------------------------------------------------
-    // GLOBAL HELPERS
-    // ---------------------------------------------------------
-    
+
+    // ─── Helpers ──────────────────────────────────────────────────────────
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
-    function existingData() {
-      return resource.data;
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
-    function incomingData() {
-      return request.resource.data;
-    }
-
-    function getUserData(uid) {
-      return get(/databases/$(database)/documents/users/$(uid)).data;
+    function userExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'cbrprints22@gmail.com' || 
-        request.auth.token.email == 'sizabantubarbershop@gmail.com' || 
-        (request.auth.token.email != null && request.auth.token.email.matches('.*@sizabantubarbershop\\.co\\.za$')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+      return userExists() && getUserRole() == 'admin';
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    function isBarberOrAdmin() {
+      return userExists() && getUserRole() in ['barber', 'admin'];
     }
 
-    // ---------------------------------------------------------
-    // COLLECTIONS
-    // ---------------------------------------------------------
-
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    match /system/ping {
-      allow read, write: if true;
-    }
-
-    match /test/connection {
-      allow read: if true;
-    }
-
-    // USERS
+    // ─── /users/{userId} ──────────────────────────────────────────────────
     match /users/{userId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-    }
+      allow read: if isOwner(userId) || isAdmin();
 
-    // BOOKINGS
-    match /bookings/{bookingId} {
-      allow read: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || 
-        isAdmin() ||
-        resource.data.type == 'queue'
-      );
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // Self-registration: new clients only, role locked to 'client'
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && request.resource.data.role == 'client';
+
+      // Self-update: cannot change role, stamps, or rewards
+      allow update: if
+        (isOwner(userId)
+          && !request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasAny(['role', 'stamps', 'rewardsUnlocked']))
+        || isAdmin();
+
       allow delete: if isAdmin();
     }
 
-    // QUEUE (Live Queue State)
+    // ─── /bookings/{bookingId} ────────────────────────────────────────────
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isBarberOrAdmin());
+
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+
+      // Users may only cancel their own booking; staff can update any field
+      allow update: if
+        (isSignedIn()
+          && resource.data.userId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'cancelled')
+        || isBarberOrAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // ─── /queue/{queueId} ─────────────────────────────────────────────────
     match /queue/{queueId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isBarberOrAdmin();
     }
 
-    // BARBERS
+    // ─── /barbers/{barberId} ──────────────────────────────────────────────
     match /barbers/{barberId} {
-      allow read: if isSignedIn();
+      allow read: if true;        // Public — shown on booking page
       allow write: if isAdmin();
     }
 
-    // SETTINGS
-    match /settings/{settingsId} {
-      allow read, write: if isAdmin();
+    // ─── /settings/{settingId} ────────────────────────────────────────────
+    // SEC-03 FIX: Stores encrypted OAuth tokens — NEVER expose to clients.
+    // Server reads/writes via Admin SDK (bypasses these rules).
+    match /settings/{settingId} {
+      allow read, write: if false;
+    }
+
+    // ─── /system/{docId} ──────────────────────────────────────────────────
+    // SEC-02 FIX: Was allow read, write: if true (publicly writable!)
+    // Health checks must use GET /api/health endpoint instead.
+    match /system/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ─── /test/{docId} ────────────────────────────────────────────────────
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ─── /onboarding_statuses/{email} ─────────────────────────────────────
+    // Server-managed via Admin SDK only.
+    match /onboarding_statuses/{email} {
+      allow read, write: if false;
+    }
+
+    // ─── /scheduled_emails/{id} ───────────────────────────────────────────
+    // SEC-09 FIX: Raw HTML never accessible to clients.
+    match /scheduled_emails/{id} {
+      allow read, write: if false;
+    }
+
+    // ─── /otp_sessions/{email} ────────────────────────────────────────────
+    // OTPs are in Upstash Redis, not Firestore.
+    // This rule exists as a safety net in case of future collection creation.
+    match /otp_sessions/{email} {
+      allow read, write: if false;
+    }
+
+    // ─── /services/{serviceId} — Phase 3 ─────────────────────────────────
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── /business_hours/{day} — Phase 3 ─────────────────────────────────
+    match /business_hours/{day} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── /promotions/{id} — Phase 3 ──────────────────────────────────────
+    match /promotions/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── /payments/{id} — Phase 4 ────────────────────────────────────────
+    match /payments/{id} {
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;  // Server-managed only
+    }
+
+    // ─── /whatsapp_logs/{id} — Phase 5 ───────────────────────────────────
+    match /whatsapp_logs/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ─── Default deny ─────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

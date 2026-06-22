@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
+import { Analytics } from "@vercel/analytics/next";
 import React, { useState, useEffect, Component, ErrorInfo, ReactNode, useRef } from 'react';
 import { 
   Phone, 
