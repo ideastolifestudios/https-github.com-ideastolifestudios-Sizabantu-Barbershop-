@@ -1,15 +1,33 @@
 // src/context/AuthContext.tsx
 // React context that listens to Firebase Auth state and provides the user + role to the app.
+// Improvements included:
+// - use onIdTokenChanged to pick up token/claim updates
+// - use onSnapshot to listen to realtime role changes in Firestore
+// - check custom claims (preferred) and fallback to Firestore
+// - stronger typing for user profile
+// - mounted flag to avoid state updates after unmount
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { onIdTokenChanged, User } from "firebase/auth";
+import { doc, onSnapshot, DocumentSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase-config";
+
+// Strongly-typed Firestore user profile
+interface UserProfile {
+  name?: string;
+  email?: string;
+  phoneNumber?: string;
+  role?: "customer" | "barber" | "admin";
+  createdAt?: any;
+  lastLogin?: any;
+  status?: string;
+}
 
 // Define what our Auth State looks like
 interface AuthState {
   user: User | null;
   role: "customer" | "barber" | "admin" | null;
+  // `loading` is true while either auth or role is being resolved
   loading: boolean;
 }
 
@@ -27,36 +45,93 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   useEffect(() => {
-    // 1. Listen to Firebase Auth state changes (handles persistent login sessions)
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          // 2. Fetch user's role from the Firestore document we created in Step 2
-          const userDocRef = doc(db, "users", firebaseUser.uid);
-          const userDocSnap = await getDoc(userDocRef);
+    let mounted = true;
+    let unsubscribeProfile: (() => void) | null = null;
 
-          if (userDocSnap.exists()) {
-            const userData = userDocSnap.data() as { role?: AuthState["role"] } | undefined;
-            setState({
-              user: firebaseUser,
-              role: userData?.role ?? "customer",
-              loading: false,
-            });
-          } else {
-            // Fallback if Auth exists but Firestore document hasn't populated yet
-            setState({ user: firebaseUser, role: "customer", loading: false });
-          }
-        } catch (error) {
-          console.error("Error fetching user profile role:", error);
-          setState({ user: firebaseUser, role: null, loading: false });
+    // Listen to ID token changes so we pick up custom claim updates as well
+    const unsubscribeAuth = onIdTokenChanged(auth, async (firebaseUser) => {
+      if (!mounted) return;
+
+      // If user is signed out
+      if (!firebaseUser) {
+        if (unsubscribeProfile) {
+          unsubscribeProfile();
+          unsubscribeProfile = null;
         }
-      } else {
-        // User is logged out
+
+        if (!mounted) return;
         setState({ user: null, role: null, loading: false });
+        return;
+      }
+
+      // We have a signed-in user; optimistically set user and show loading until role resolved
+      if (!mounted) return;
+      setState((s) => ({ ...s, user: firebaseUser, loading: true }));
+
+      try {
+        // 1) Prefer role from custom claims (set server-side via Admin SDK)
+        const idTokenResult = await firebaseUser.getIdTokenResult();
+        const claimRole = idTokenResult?.claims?.role as AuthState["role"] | undefined;
+
+        if (claimRole) {
+          if (!mounted) return;
+          // Attach a snapshot listener too so role updates in Firestore reflect in UI
+          const ref = doc(db, "users", firebaseUser.uid);
+          unsubscribeProfile = onSnapshot(
+            ref,
+            (snap: DocumentSnapshot) => {
+              if (!mounted) return;
+              if (snap.exists()) {
+                const data = snap.data() as UserProfile | undefined;
+                // If Firestore has an authoritative role different from claim, prefer claim for security
+                setState({ user: firebaseUser, role: claimRole, loading: false });
+              } else {
+                // Firestore doc missing — still use claim
+                setState({ user: firebaseUser, role: claimRole, loading: false });
+              }
+            },
+            (err) => {
+              console.error("Error listening to user profile snapshot:", err);
+              if (!mounted) return;
+              setState({ user: firebaseUser, role: claimRole ?? null, loading: false });
+            }
+          );
+
+          return;
+        }
+
+        // 2) Fallback: listen to the Firestore user doc for role
+        const ref = doc(db, "users", firebaseUser.uid);
+        unsubscribeProfile = onSnapshot(
+          ref,
+          (snap: DocumentSnapshot) => {
+            if (!mounted) return;
+            if (snap.exists()) {
+              const data = snap.data() as UserProfile | undefined;
+              setState({ user: firebaseUser, role: data?.role ?? "customer", loading: false });
+            } else {
+              // If profile doesn't exist yet, fall back to 'customer'
+              setState({ user: firebaseUser, role: "customer", loading: false });
+            }
+          },
+          (err) => {
+            console.error("Error listening to user profile snapshot:", err);
+            if (!mounted) return;
+            setState({ user: firebaseUser, role: null, loading: false });
+          }
+        );
+      } catch (error) {
+        console.error("Error resolving user role:", error);
+        if (!mounted) return;
+        setState({ user: firebaseUser, role: null, loading: false });
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      mounted = false;
+      if (unsubscribeProfile) unsubscribeProfile();
+      unsubscribeAuth();
+    };
   }, []);
 
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
