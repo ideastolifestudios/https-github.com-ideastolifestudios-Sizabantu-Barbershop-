@@ -48,3 +48,6 @@ pnpm-debug.log*
 
 # ─── Vercel ────────────────────────────────────────────────────────────────────
 .vercel
+service-account.json
+*-firebase-adminsdk-*.json
+service-account.json
