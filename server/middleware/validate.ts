@@ -4,18 +4,18 @@ import { z, ZodSchema } from 'zod';
 // ─── Reusable Field Schemas ───────────────────────────────────────────────────
 
 export const emailSchema = z
-  .string({ required_error: 'Email is required.' })
+  .string().min(1, 'Email is required.')
   .email('Invalid email address.')
   .max(255, 'Email must not exceed 255 characters.')
   .toLowerCase()
   .trim();
 
 export const otpCodeSchema = z
-  .string({ required_error: 'OTP code is required.' })
+  .string().min(1, 'OTP code is required.')
   .regex(/^\d{6}$/, 'OTP must be exactly 6 digits.');
 
 export const userIdSchema = z
-  .string({ required_error: 'User ID is required.' })
+  .string().min(1, 'User ID is required.')
   .min(1)
   .max(128)
   .trim();
@@ -36,7 +36,7 @@ export const verifyOtpSchema = z.object({
 /** POST /api/bookings/verify */
 export const verifyBookingSchema = z.object({
   code: z
-    .string({ required_error: 'Verification code is required.' })
+    .string().min(1, 'Verification code is required.')
     .regex(/^\d{6}$/, 'Verification code must be exactly 6 digits.'),
   barberId: z.string().min(1).max(128).optional(),
 });
@@ -44,7 +44,7 @@ export const verifyBookingSchema = z.object({
 /** POST /api/notify/:userId */
 export const notifyUserSchema = z.object({
   message: z
-    .string({ required_error: 'Message is required.' })
+    .string().min(1, 'Message is required.')
     .min(1, 'Message cannot be empty.')
     .max(500, 'Message must not exceed 500 characters.'),
   type: z.enum(['info', 'success', 'warning', 'error']).default('info'),

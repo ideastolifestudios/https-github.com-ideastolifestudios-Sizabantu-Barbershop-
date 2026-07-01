@@ -47,15 +47,15 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
-import {, 
+import { 
+  getAuth, 
   signInWithPopup, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
-  sendEmailVerification,
-  User as FirebaseUser 
-} from 'firebase/auth';
-import {, 
+  sendEmailVerification 
+} from "firebase/auth";
+import {
   doc, 
   getDoc, 
   setDoc, 
@@ -73,8 +73,6 @@ import {,
 } from 'firebase/firestore';
 import { io } from 'socket.io-client';
 
-export const db =(app, (firebaseConfig as any).firestoreDatabaseId);
-const auth =(app);
 import { auth, db } from './firebase-config';
 import BookingPage from './pages/BookingPage';
 

@@ -1,3 +1,4 @@
+import { getBookingConfirmationTemplate } from "./server/services/emailTemplates";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -13,42 +14,68 @@ import nodemailer from "nodemailer";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const rootDir = process.cwd();
 
 // Initialize Firebase Admin
 let db: admin.firestore.Firestore | null = null;
+
 try {
   const config = firebaseConfig as any;
-  const projectId = process.env.PROJECT_ID || config.projectId;
-  const appInstance = !admin.apps.length 
-    ? admin.initializeApp({ projectId: projectId })
+
+  // Ensure the service account exists
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    throw new Error(
+      "Missing FIREBASE_SERVICE_ACCOUNT_BASE64 environment variable."
+    );
+  }
+
+  // Decode the Base64 service account
+  const serviceAccount = JSON.parse(
+    Buffer.from(
+      process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+      "base64"
+    ).toString("utf8")
+  );
+
+  // Initialize Firebase Admin only once
+  const appInstance = !admin.apps.length
+    ? admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      })
     : admin.app();
 
-  // Reference for multi-database: getFirestore(app, databaseId)
-  db = config.firestoreDatabaseId 
+  // Firestore (supports multi-database if configured)
+  db = config.firestoreDatabaseId
     ? getFirestore(appInstance, config.firestoreDatabaseId)
     : getFirestore(appInstance);
-  console.log(`Firebase Admin initialized for project: ${projectId}, database: ${config.firestoreDatabaseId || 'default'}`);
+
+  console.log(
+    `Firebase Admin initialized for project: ${serviceAccount.project_id}, database: ${
+      config.firestoreDatabaseId || "default"
+    }`
+  );
 
   // Connectivity Test
-  db.collection("system").doc("ping").set({
-    lastCheck: admin.firestore.FieldValue.serverTimestamp(),
-    status: "online"
-  }).then(() => {
-    console.log("Firebase Admin connectivity test: SUCCESS");
-  }).catch((err) => {
-    console.error("Firebase Admin connectivity test: FAILED", {
-      message: err.message,
-      code: err.code,
-      projectId: config.projectId,
-      dbId: config.firestoreDatabaseId
+  db.collection("system")
+    .doc("ping")
+    .set({
+      lastCheck: admin.firestore.FieldValue.serverTimestamp(),
+      status: "online",
+    })
+    .then(() => {
+      console.log("Firebase Admin connectivity test: SUCCESS");
+    })
+    .catch((err) => {
+      console.error("Firebase Admin connectivity test: FAILED", {
+        message: err.message,
+        code: err.code,
+        projectId: serviceAccount.project_id,
+        dbId: config.firestoreDatabaseId,
+      });
     });
-  });
-} catch (error) {
-  console.error("Firebase Admin initialization failed:", error);
+} catch (err: any) {
+  console.error("Firebase Admin initialization failed:", err.message);
 }
-
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -1323,6 +1350,27 @@ if (db) {
 
       // New Booking Trigger
       if (change.type === "added" && data.status === "confirmed") {
+          // Phase 11: Dispatch Booking Confirmation Email
+          const targetEmail = data.email || data.userEmail;
+          if (targetEmail) {
+            const transporter = getSMTPTransporter();
+            if (transporter) {
+              const htmlContent = getBookingConfirmationTemplate(
+                data.userName || "Valued Client",
+                data.date || "Scheduled Date",
+                data.time || "Scheduled Time",
+                data.service || "Premium Service"
+              );
+              transporter.sendMail({
+                from: `"Sizabantu Barbershop" <${process.env.SMTP_USER}>`,
+                to: targetEmail,
+                subject: "Booking Confirmed - Sizabantu Barbershop",
+                html: htmlContent
+              }).then(() => console.log(`[Email] Confirmation sent to ${targetEmail}`))
+                .catch(err => console.error("[Email Error]", err));
+            }
+          }
+
         io.emit("notification:admin", { 
           title: "New Booking", 
           message: `${data.userName} joined ${data.type === 'queue' ? 'the queue' : 'a scheduled slot'}.` 
