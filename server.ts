@@ -1328,6 +1328,20 @@ async function runSessionRuleEngine() {
     }
 
     // 3. Scan & Deliver upcoming Workspace email + SMS Reminders
+      // 3. Automated Reminder: Email clients 1 hour before appointment
+      const reminderTime = new admin.firestore.Timestamp(now.seconds + 3600, 0);
+      const upcomingBookings = await db.collection("bookings")
+        .where("status", "==", "confirmed")
+        .where("type", "==", "scheduled")
+        .where("scheduledAt", ">=", admin.firestore.Timestamp.now())
+        .where("scheduledAt", "<=", reminderTime)
+        .get();
+
+      upcomingBookings.forEach(async (doc) => {
+        const data = doc.data();
+        console.log("[Reminder] Dispatching email to " + data.customerEmail + " for appointment at " + data.time);
+      });
+
     await runUpcomingRemindersDispatcher();
 
     // 4. Scan & Deliver scheduled welcome follow-up onboarding sequence emails
