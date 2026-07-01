@@ -1,6 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Admin role check
 
     // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -21,6 +22,48 @@ service cloud.firestore {
     }
 
     function isAdmin() {
+      return request.auth.token.role == 'admin';
+    }
+
+    // Owner check
+    function isOwner(ownerId) {
+      return request.auth.uid == ownerId;
+    }
+
+    // Staff check
+    function isStaff(staffId) {
+      return request.auth.uid == staffId;
+    }
+
+    // Authenticated check
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Admin access - full read/write
+    match /admin/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Customers collection
+    match /customers/{customerId} {
+      // Customers can read their own data
+      allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
+      // Customers can write their own data
+      allow write: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
+      
+      // Bookings subcollection
+      match /bookings/{bookingId} {
+        allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin() || isStaff(resource.data.staffId));
+        allow write: if isAdmin();
+      }
+
+      // Reviews subcollection
+      match /reviews/{reviewId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.auth.uid == customerId;
+        allow write: if isAdmin();
+      }
       return userExists() && getUserRole() == 'admin';
     }
 
@@ -48,8 +91,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Bookings collection
     // ─── /bookings/{bookingId} ────────────────────────────────────────────
     match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.customerId || isAdmin() || isStaff(resource.data.staffId));
+      allow create: if isAuthenticated() && request.auth.uid == resource.data.customerId;
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.customerId && resource.data.status == 'pending');
       allow read: if isSignedIn()
         && (resource.data.userId == request.auth.uid || isBarberOrAdmin());
 
@@ -67,6 +114,28 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Services collection
+    match /services/{serviceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Staff collection
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow read, write: if isStaff(staffId);
+      allow write: if isAdmin();
+    }
+
+    // Revenue collection (admin only)
+    match /revenue/{revenueId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Loyalty collection
+    match /loyalty/{customerId} {
+      allow read: if isAuthenticated() && (request.auth.uid == customerId || isAdmin());
     // ─── /queue/{queueId} ─────────────────────────────────────────────────
     match /queue/{queueId} {
       allow read: if isSignedIn();
@@ -131,12 +200,19 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Referrals collection
+    match /referrals/{referralId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.referrerId || isAdmin());
+      allow create: if isAuthenticated();
     // ─── /promotions/{id} — Phase 3 ──────────────────────────────────────
     match /promotions/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
+    // Settings collection (admin only)
+    match /settings/{document=**} {
+      allow read, write: if isAdmin();
     // ─── /payments/{id} — Phase 4 ────────────────────────────────────────
     match /payments/{id} {
       allow read: if isSignedIn()
@@ -153,6 +229,12 @@ service cloud.firestore {
     // ─── Default deny ─────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
+    }
+
+    // Audit logs (admin only)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }
