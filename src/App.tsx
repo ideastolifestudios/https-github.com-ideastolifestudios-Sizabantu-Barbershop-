@@ -76,6 +76,7 @@ import { io } from 'socket.io-client';
 export const db =(app, (firebaseConfig as any).firestoreDatabaseId);
 const auth =(app);
 import { auth, db } from './firebase-config';
+import BookingPage from './pages/BookingPage';
 
 const googleProvider = new GoogleAuthProvider();
 const socket = io();
