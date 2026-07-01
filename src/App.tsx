@@ -47,9 +47,7 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
+import {, 
   signInWithPopup, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
@@ -57,8 +55,7 @@ import {
   sendEmailVerification,
   User as FirebaseUser 
 } from 'firebase/auth';
-import { 
-  getFirestore, 
+import {, 
   doc, 
   getDoc, 
   setDoc, 
@@ -74,13 +71,12 @@ import {
   deleteDoc,
   Timestamp
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 import { io } from 'socket.io-client';
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
-const auth = getAuth(app);
+export const db =(app, (firebaseConfig as any).firestoreDatabaseId);
+const auth =(app);
+import { auth, db } from './firebase-config';
+
 const googleProvider = new GoogleAuthProvider();
 const socket = io();
 
