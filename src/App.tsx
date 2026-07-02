@@ -4945,6 +4945,8 @@ export default function App() {
   const { user, profile, loading, logout } = useAuth();
   useAppointmentReminders(profile);
 
+  const isAdminRoute = window.location.pathname === '/admin';
+
   return (
     <div className="min-h-screen bg-white font-sans selection:bg-brand-blue selection:text-white">
       <NotificationCenter />
@@ -4953,28 +4955,37 @@ export default function App() {
         <EmailVerificationPrompt user={user} logout={logout} />
       )}
       <main className="transition-all duration-500">
-        <Hero />
-        <Mission />
-        
-        {/* Conditional Admin Hub */}
-        {profile?.role === 'admin' && (
-          <div id="admin-hub" className="scroll-mt-32">
-            <ErrorBoundary name="AdminDashboard">
-              <AdminDashboard />
-            </ErrorBoundary>
+        {isAdminRoute ? (
+          <div className="p-8 bg-slate-50 min-h-screen">
+            <div className="max-w-7xl mx-auto">
+              <ErrorBoundary name="AdminDashboard">
+                <AdminDashboard />
+              </ErrorBoundary>
+            </div>
           </div>
+        ) : (
+          <>
+            <Hero />
+            <Mission />
+            {profile?.role === 'admin' && (
+              <div id="admin-hub" className="scroll-mt-32">
+                <ErrorBoundary name="AdminDashboard">
+                  <AdminDashboard />
+                </ErrorBoundary>
+              </div>
+            )}
+            <ErrorBoundary name="BookingSystem">
+              <BookingSystem profile={profile} />
+            </ErrorBoundary>
+            <WelcomeJourney />
+            <HaircutPricing />
+            <Portfolio />
+            <Reviews />
+            <FAQSection />
+            <ContactSection />
+            <Footer />
+          </>
         )}
-        
-        <ErrorBoundary name="BookingSystem">
-          <BookingSystem profile={profile} />
-        </ErrorBoundary>
-        <WelcomeJourney />
-        <HaircutPricing />
-        <Portfolio />
-        <Reviews />
-        <FAQSection />
-        <ContactSection />
-        <Footer />
       </main>
       <BackToTop />
     </div>
