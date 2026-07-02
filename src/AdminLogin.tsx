@@ -74,7 +74,7 @@ export default function AdminLogin() {
 
         <div className="admin-login-footer">
           <p>
-            <a href="/">Back to Member Login</a>
+            <a href="/">Back to Sign In / Sign Up</a>
           </p>
         </div>
       </div>

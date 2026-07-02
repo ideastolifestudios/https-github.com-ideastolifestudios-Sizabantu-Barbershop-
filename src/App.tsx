@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import AuthModal from "./components/AuthModal";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -3382,7 +3384,7 @@ const TopNav = () => {
               className="bg-slate-900 text-white px-6 py-2.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-200/50 transition-all flex items-center gap-2 group"
             >
               <User className="w-3 h-3 group-hover:rotate-12 transition-transform" />
-              Member Login
+              Sign In / Sign Up
             </motion.button>
           )}
         </div>
@@ -4942,6 +4944,29 @@ const EmailVerificationPrompt = ({ user, logout }: { user: FirebaseUser; logout:
 // --- Main App ---
 
 export default function App() {
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  useEffect(() => {
+    const handleOpen = () => setShowAuthModal(true);
+    window.addEventListener("open-login-modal", handleOpen);
+
+    // Intercept navbar buttons instantly to prevent default scrolling
+    const handleGlobalClick = (e) => {
+      const target = e.target.closest("button, a");
+      if (target && (target.textContent.includes("Sign In / Sign Up") || target.textContent.includes("Sign In / Sign Up") || target.textContent.includes("Sign In / Sign Up"))) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowAuthModal(true);
+      }
+    };
+    window.addEventListener("click", handleGlobalClick, true);
+
+    return () => {
+      window.removeEventListener("open-login-modal", handleOpen);
+      window.removeEventListener("click", handleGlobalClick, true);
+    };
+  }, []);
+
   const { user, profile, loading, logout } = useAuth();
   useAppointmentReminders(profile);
 
@@ -4988,6 +5013,7 @@ export default function App() {
         )}
       </main>
       <BackToTop />
+      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </div>
   );
 }
