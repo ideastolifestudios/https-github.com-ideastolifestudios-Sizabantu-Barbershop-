@@ -10,7 +10,7 @@ import {
   updateProfile,
   type AuthError,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase"; 
+import { auth } from "../lib/firebase"; 
 import { X, AlertCircle, Loader2 } from "lucide-react";
 
 type Mode = "signin" | "signup";
