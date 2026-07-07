@@ -1,3 +1,4 @@
+import ChatWidget from "./components/ChatWidget";
 import AuthModal from "./components/AuthModal";
 /**
  * @license
@@ -5013,6 +5014,7 @@ export default function App() {
       </main>
       <BackToTop />
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+          <ChatWidget />
     </div>
   );
 }

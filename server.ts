@@ -1,3 +1,11 @@
+import "dotenv/config";
+console.log("--- 🛡️ ENV HEALTH CHECK ---");
+console.log("GOOGLE_CLIENT_ID Loaded:", !!process.env.GOOGLE_CLIENT_ID);
+console.log("GEMINI_API_KEY Loaded:", !!process.env.GEMINI_API_KEY);
+console.log("----------------------------");
+
+import aiRoutes from "./src/routes/ai";
+import { syncBookingToWorkspace } from './src/lib/calendar';
 import { getBookingConfirmationTemplate } from "./server/services/emailTemplates";
 import express from "express";
 import cors from "cors";
@@ -787,82 +795,28 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
 
     // 1. SYNC TO GOOGLE CALENDAR
     if (!calendarSynced) {
-      if (!accessToken) {
-        console.log(`[WORKSPACE] Google Calendar sync skipped: Workspace not linked yet.`);
-        logLines.push("Calendar sync skipped: Workspace not linked.");
-      } else {
-        console.log(`[WORKSPACE] Syncing booking ${bookingId} to Google Calendar...`);
-        let startDateTime = new Date().toISOString();
-        let endDateTime = new Date(Date.now() + 45 * 60000).toISOString();
+      console.log(`[WORKSPACE] Syncing booking ${bookingId} to Google Calendar...`);
+      try {
+        // Safely parse the start time, defaulting to a 1-hour service duration
+        const start = new Date(booking.startDateTime || booking.date);
+        const end = booking.endDateTime ? new Date(booking.endDateTime) : new Date(start.getTime() + 60 * 60 * 1000);
 
-        try {
-          if (booking.scheduledAt) {
-            if (typeof booking.scheduledAt.toDate === "function") {
-              startDateTime = booking.scheduledAt.toDate().toISOString();
-            } else {
-              startDateTime = new Date(booking.scheduledAt).toISOString();
-            }
-            endDateTime = new Date(new Date(startDateTime).getTime() + 45 * 60000).toISOString();
-          }
-        } catch (err) {
-          console.error("Failed to parse startDateTime for Calendar:", err);
-        }
+        const calData = await syncBookingToWorkspace({
+          customerName: booking.userName || 'Client',
+          service: booking.serviceName || 'Service',
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          email: booking.userEmail || '',
+          phone: booking.userPhone || ''
+        });
 
-        const eventBody = {
-          summary: `Sizabantu Barber: ${booking.serviceName} - ${booking.userName}`,
-          location: "Sizabantu Barbershop, Klipfontein View, Midrand",
-          description: `Client: ${booking.userName}\nEmail: ${booking.userEmail}\nService: ${booking.serviceName}\nCheck-in Code: ${verificationCode}\nStatus: ${booking.status}\n\nAutomated event created by Sizabantu Workspace Engine.`,
-          start: {
-            dateTime: startDateTime,
-            timeZone: "Africa/Johannesburg"
-          },
-          end: {
-            dateTime: endDateTime,
-            timeZone: "Africa/Johannesburg"
-          },
-          reminders: {
-            useDefault: false,
-            overrides: [
-              { method: "email", minutes: 60 },
-              { method: "popup", minutes: 15 }
-            ]
-          }
-        };
-
-        try {
-          const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${accessToken}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(eventBody)
-          });
-
-          if (calRes.ok) {
-            const calData = await calRes.json();
-            calendarSynced = true;
-            calendarEventId = calData.id;
-            logLines.push(`Google Calendar event linked: ${calData.id}`);
-            console.log(`[WORKSPACE] Google Calendar slot synced successfully for booking ${bookingId}`);
-          } else {
-            const errText = await calRes.text();
-            console.error(`[WORKSPACE] Google Calendar Sync Failed (HTTP ${calRes.status}):`, errText);
-            
-            if (calRes.status === 401) {
-              await db.collection("settings").doc("google_workspace").update({ status: 'expired' });
-              io.emit("notification:admin", {
-                title: "Workspace Disconnected",
-                message: "Google Workspace access token has expired. Please re-authenticate as Admin."
-              });
-            }
-            
-            logLines.push(`Calendar sync failed: ${errText.slice(0, 100)}`);
-          }
-        } catch (gErr) {
-          console.error("[WORKSPACE] Google Calendar API error:", gErr);
-          logLines.push(`Calendar API error: ${(gErr as Error).message}`);
-        }
+        calendarSynced = true;
+        calendarEventId = calData.id;
+        logLines.push(`Google Calendar event linked: ${calData.id}`);
+        console.log(`[WORKSPACE] Google Calendar slot synced successfully for booking ${bookingId}`);
+      } catch (err) {
+        console.error("[WORKSPACE] Google Calendar API error:", err);
+        logLines.push(`Calendar API error: ${err.message}`);
       }
     }
 
@@ -1487,3 +1441,5 @@ async function startServer() {
 }
 
 startServer();
+
+app.use("/api/ai", aiRoutes);
