@@ -84,9 +84,9 @@ export const CustomerSupportChat: React.FC = () => {
       setCurrentStep('hairTexture');
     } else if (field === 'hairTexture') {
       setCurrentStep('maintenance');
-    } else if (field === 'maintenance') {
+    } else if (field === 'maintenanceLevel') {
       setCurrentStep('length');
-    } else if (field === 'length') {
+    } else if (field === 'currentLength') {
       setConsultationMode(false);
       setIsLoading(true);
 

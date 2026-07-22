@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, ReactNode, ErrorInfo } from 'react';
 import ChatWidget from "./components/ChatWidget";
 import AuthModal from "./components/AuthModal";
 
@@ -59,7 +59,8 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
-  sendEmailVerification 
+  sendEmailVerification,
+  User as FirebaseUser
 } from "firebase/auth";
 import {
   doc, 

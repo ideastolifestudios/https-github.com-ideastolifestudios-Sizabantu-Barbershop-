@@ -30,7 +30,7 @@ export const requestOtpSchema = z.object({
 /** POST /api/auth/verify-otp */
 export const verifyOtpSchema = z.object({
   email: emailSchema,
-  code: otpCodeSchema,
+  otp: otpCodeSchema,
 });
 
 /** POST /api/bookings/verify */

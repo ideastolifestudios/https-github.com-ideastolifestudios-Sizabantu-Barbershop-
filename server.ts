@@ -33,6 +33,24 @@ import { getFirestore } from "firebase-admin/firestore";
 import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
 import nodemailer from "nodemailer";
 
+import { requireAuth } from "./server/middleware/auth";
+import { requireAdmin, requireBarberOrAdmin } from "./server/middleware/rbac";
+import {
+  otpRequestLimiter,
+  otpVerifyLimiter,
+  bookingVerifyLimiter,
+  notifyLimiter,
+  globalApiLimiter
+} from "./server/middleware/rateLimiter";
+import {
+  validateBody,
+  requestOtpSchema,
+  verifyOtpSchema,
+  verifyBookingSchema,
+  notifyUserSchema,
+  workspaceConfigSchema
+} from "./server/middleware/validate";
+
 dotenv.config();
 
 const rootDir = process.cwd();
@@ -108,6 +126,18 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
+// Custom HTTP security headers (Helmet fallback)
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
+// Global API rate limiting applied to all /api/* routes
+app.use("/api/*", globalApiLimiter);
+
 // --- SMTP EMAIL SYSTEM (Secure STPM / Fallback Integration) ---
 
 let smtpTransporter: nodemailer.Transporter | null = null;
@@ -158,8 +188,8 @@ async function sendSMTPEmail(options: { to: string; subject: string; text?: stri
   }
 
   try {
-    const info = await console.log("📧 [EMAIL ATTEMPT] Handing off message to Nodemailer...");
-    transporter.sendMail({
+    console.log("📧 [EMAIL ATTEMPT] Handing off message to Nodemailer...");
+    const info = await transporter.sendMail({
       from,
       to: options.to,
       subject: options.subject,
@@ -180,8 +210,27 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Production SEO and Search Engine Readiness Enablers
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain");
+  res.send("User-agent: *\nAllow: /\nSitemap: https://sizabantubarbershop.co.za/sitemap.xml");
+});
+
+app.get("/sitemap.xml", (req, res) => {
+  res.type("application/xml");
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://sizabantubarbershop.co.za/</loc>
+    <lastmod>${new Date().toISOString().split('T')[0]}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`);
+});
+
 // Endpoint to verify a booking code (Safety & Verification)
-app.post("/api/bookings/verify", async (req, res) => {
+app.post("/api/bookings/verify", bookingVerifyLimiter, validateBody(verifyBookingSchema), async (req, res) => {
   const { code } = req.body;
   if (!db) return res.status(500).json({ error: "Database not ready" });
 
@@ -210,7 +259,7 @@ app.post("/api/bookings/verify", async (req, res) => {
 
 const otpStore = new Map<string, { code: string; expires: number }>();
 
-app.post("/api/auth/request-otp", async (req, res) => {
+app.post("/api/auth/request-otp", otpRequestLimiter, validateBody(requestOtpSchema), async (req, res) => {
   const { email } = req.body;
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(email, { code, expires: Date.now() + 10 * 60000 }); // 10 mins
@@ -250,7 +299,7 @@ app.post("/api/auth/request-otp", async (req, res) => {
   res.json({ success: true });
 });
 
-app.post("/api/auth/verify-otp", async (req, res) => {
+app.post("/api/auth/verify-otp", otpVerifyLimiter, validateBody(verifyOtpSchema), async (req, res) => {
   const { email, otp } = req.body;
   const stored = otpStore.get(email);
 
@@ -276,7 +325,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 });
 
 // Endpoint to trigger manual notification (Barber Action)
-app.post("/api/notify/:userId", async (req, res) => {
+app.post("/api/notify/:userId", requireAuth, requireBarberOrAdmin, notifyLimiter, validateBody(notifyUserSchema), async (req, res) => {
   const { userId } = req.params;
   const { message } = req.body;
   
@@ -334,7 +383,7 @@ app.post("/api/notify/:userId", async (req, res) => {
 
 // --- GOOGLE WORKSPACE ENDPOINTS ---
 
-app.get("/api/workspace/status", async (req, res) => {
+app.get("/api/workspace/status", requireAuth, requireAdmin, async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not ready" });
   try {
     const doc = await db.collection("settings").doc("google_workspace").get();
@@ -359,7 +408,7 @@ app.get("/api/workspace/status", async (req, res) => {
   }
 });
 
-app.post("/api/workspace/config", async (req, res) => {
+app.post("/api/workspace/config", requireAuth, requireAdmin, validateBody(workspaceConfigSchema), async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not ready" });
   const { calendarId, emailEnabled, smsEnabled, contactsEnabled, onboardingEnabled } = req.body;
   try {
@@ -377,7 +426,7 @@ app.post("/api/workspace/config", async (req, res) => {
   }
 });
 
-app.post("/api/workspace/test", async (req, res) => {
+app.post("/api/workspace/test", requireAuth, requireAdmin, async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not ready" });
   try {
     const wsSnap = await db.collection("settings").doc("google_workspace").get();
@@ -775,8 +824,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
     const needContact = !contactSynced && contactsEnabled && (booking.userName || booking.name || booking.clientName || booking.customerName) && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail);
 
     if (!needCalendar && !needEmail && !needContact) {
-    console.log("🧐 [DEBUG STATE] Preferences Object:", typeof preferences !== "undefined" ? JSON.stringify(preferences) : (typeof config !== "undefined" ? JSON.stringify(config) : "Not in scope"));
-    console.log("🧐 [DEBUG STATE] Booking Sync Flags:", typeof booking !== "undefined" ? JSON.stringify({ id: booking?.id, status: booking?.status, isSynced: booking?.isSynced, workspaceSynced: booking?.workspaceSynced }) : "Not in scope");
+      console.log("🧐 [DEBUG STATE] Booking Sync Flags:", typeof booking !== "undefined" ? JSON.stringify({ id: booking?.id, status: booking?.status, isSynced: booking?.isSynced, workspaceSynced: booking?.workspaceSynced }) : "Not in scope");
       console.log(`Automation: Booking ${bookingId} already fully synchronized to Workspace based on current preferences.`);
       return;
     }
@@ -1460,3 +1508,30 @@ async function startServer() {
 startServer();
 
 app.use("/api/ai", aiRoutes);
+
+// Graceful Shutdown Handler
+function gracefulShutdown(signal: string) {
+  console.log(`📡 [SHUTDOWN] Received ${signal}. Starting graceful shutdown...`);
+
+  // Close HTTP Server
+  httpServer.close(() => {
+    console.log("🛑 [SHUTDOWN] HTTP server closed. Active connections terminated.");
+
+    // Close Firebase Admin Connection
+    if (db) {
+      console.log("🛑 [SHUTDOWN] Flushing database connections...");
+    }
+
+    console.log("👋 [SHUTDOWN] Graceful shutdown complete. Exiting.");
+    process.exit(0);
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error("🚨 [SHUTDOWN] Forced shutdown after timeout.");
+    process.exit(1);
+  }, 10000);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
