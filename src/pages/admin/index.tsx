@@ -45,18 +45,18 @@ export default function AdminDashboard() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-white flex">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col min-h-screen">
-        <div className="p-6 text-center border-b border-slate-800">
+      <aside className="w-64 bg-white border-r border-slate-100 text-slate-800 flex flex-col min-h-screen">
+        <div className="p-6 text-center border-b border-slate-100">
           <h1 className="text-xl font-black text-red-500 uppercase tracking-widest">
             Sizabantu <span className="text-blue-500 italic lowercase font-serif">Admin</span>
           </h1>
         </div>
         <nav className="flex-1 p-4 space-y-2">
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-4 mt-4">Analytics</p>
+          <p className="text-xs text-slate-400 font-black tracking-widest text-[9px] font-bold uppercase tracking-wider mb-4 mt-4">Analytics</p>
           <SidebarButton active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} icon="📊">Overview</SidebarButton>
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-4 mt-8">Management</p>
+          <p className="text-xs text-slate-400 font-black tracking-widest text-[9px] font-bold uppercase tracking-wider mb-4 mt-8">Management</p>
           <SidebarButton active={activeTab === 'bookings'} onClick={() => setActiveTab('bookings')} icon="📅">Live Bookings</SidebarButton>
         </nav>
       </aside>
@@ -64,10 +64,10 @@ export default function AdminDashboard() {
       {/* Main Content */}
       <main className="flex-1 p-8 h-screen overflow-y-auto">
         <header className="flex justify-between items-center mb-8">
-          <h2 className="text-3xl font-bold text-slate-800 capitalize">{activeTab}</h2>
+          <h2 className="text-xl font-black uppercase tracking-tight text-slate-800 font-bold text-slate-800 capitalize">{activeTab}</h2>
           <div className="flex items-center space-x-4">
             <span className="text-sm font-medium text-green-500">Live Sync Active 🟢</span>
-            <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-white font-bold">A</div>
+            <div className="w-10 h-10 bg-slate-50 text-brand-blue rounded-full flex items-center justify-center text-white font-bold">A</div>
           </div>
         </header>
 
@@ -87,7 +87,7 @@ export default function AdminDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-sm uppercase">
+                  <tr className="bg-slate-50 text-slate-400 font-black tracking-widest text-[9px] text-sm uppercase">
                     <th className="p-4 border-b">Client</th>
                     <th className="p-4 border-b">Service</th>
                     <th className="p-4 border-b">Date & Time</th>
@@ -119,7 +119,7 @@ export default function AdminDashboard() {
                     </tr>
                   ))}
                   {bookings.length === 0 && (
-                    <tr><td colSpan={5} className="p-8 text-center text-slate-500 font-medium">No bookings found. Waiting for live data...</td></tr>
+                    <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-black tracking-widest text-[9px] font-medium">No bookings found. Waiting for live data...</td></tr>
                   )}
                 </tbody>
               </table>
@@ -133,7 +133,7 @@ export default function AdminDashboard() {
 
 function SidebarButton({ active, onClick, icon, children }: any) {
   return (
-    <button onClick={onClick} className={`w-full text-left px-4 py-3 rounded-lg flex items-center space-x-3 transition-all ${active ? 'bg-blue-600 text-white font-bold shadow-lg transform scale-105' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+    <button onClick={onClick} className={`w-full text-left px-4 py-3 rounded-lg flex items-center space-x-3 transition-all ${active ? 'bg-blue-600 text-white font-bold shadow-lg transform scale-105' : 'text-slate-400 hover:bg-slate-50 text-brand-blue hover:text-white'}`}>
       <span className="text-xl">{icon}</span><span>{children}</span>
     </button>
   );
@@ -141,9 +141,12 @@ function SidebarButton({ active, onClick, icon, children }: any) {
 
 function StatCard({ title, value, className = "text-slate-800" }: any) {
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+    <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-2">
       <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{title}</h4>
-      <p className={`text-3xl font-black ${className}`}>{value}</p>
-    </div>
+      <p className={`text-xl font-black uppercase tracking-tight text-slate-800 font-black ${className}`}>{value}</p>
+    
+      {/* Supercharged Executive AI Intelligence Portal */}
+      
+</div>
   );
 }

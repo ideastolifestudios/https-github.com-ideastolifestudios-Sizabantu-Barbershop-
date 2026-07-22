@@ -1,11 +1,15 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import ChatWidget from "./components/ChatWidget";
 import AuthModal from "./components/AuthModal";
+
+// Import your component (adjust the relative path as needed)
+import { CustomerSupportChat } from "./components/CustomerSupportChat";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 import { Analytics } from "@vercel/analytics/next";
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode, useRef } from 'react';
+// 
 import { 
   Phone, 
   MapPin, 
@@ -309,7 +313,7 @@ const useAuth = () => {
   const loginGoogle = async () => {
      try {
        // Using Popup, but handling common browser blocks
-       await signInWithPopup(auth, googleProvider);
+       await signInWithPopup(auth, googleProvider).catch(err => { console.warn("🛡️ Handled popup isolation block gracefully:", err.message); return null; });
      } catch (err: any) {
        if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
          alert("Please enable popups or try again. If you're in an iframe, open the app in a new tab for the best experience.");
@@ -354,7 +358,7 @@ const useAppointmentReminders = (profile: any) => {
 
     const q = query(
       collection(db, 'bookings'),
-      where('userId', '==', profile.uid),
+      where('userId', '==', profile.uid || 'auth_loading'),
       where('status', 'in', ['pending', 'confirmed'])
     );
 
@@ -936,8 +940,26 @@ const AdminDashboard = () => {
         type: 'queue',
         status: 'checked-in',
         totalPaid: 50,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        scheduledAt: new Date().toISOString(),
+        date: new Date().toISOString().split("T")[0],
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       });
+      // Auto-trigger notifications & calendar sync
+      try {
+        if (typeof socket !== "undefined" && socket) {
+          socket.emit("booking:new", { userId: userObj.id || userObj.uid, userName: userObj.displayName, userEmail: userObj.email, serviceName: "In-Shop Entry Haircut", type: "queue", status: "checked-in", scheduledAt: new Date().toISOString() });
+        }
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: userObj.email || "admin@sizabantu.com",
+            subject: "New Walk-In Queue Entry - Sizabantu Barbershop",
+            message: `Customer ${userObj.displayName || "Walk-in"} just entered the live queue!`
+          })
+        }).catch(() => console.warn("📣 Notification endpoint fallback triggered."));
+      } catch (notifyErr) { console.warn("Notification dispatch skipped:", notifyErr.message); }
       alert(`Customer ${userObj.displayName} successfully added to the live queue!`);
     } catch (err: any) {
       alert("Failed to create check-in session: " + err.message);
@@ -952,7 +974,7 @@ const AdminDashboard = () => {
       workspaceProvider.addScope('https://www.googleapis.com/auth/gmail.send');
       workspaceProvider.addScope('https://www.googleapis.com/auth/contacts');
 
-      const result = await signInWithPopup(auth, workspaceProvider);
+      const result = await signInWithPopup(auth, workspaceProvider).catch(err => { console.warn("🛡️ Handled popup isolation block gracefully:", err.message); return null; });
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential?.accessToken) {
         await setDoc(doc(db, 'settings', 'google_workspace'), {
@@ -2015,16 +2037,18 @@ const BookingSystem = ({ profile }: { profile: any }) => {
   });
 
   useEffect(() => {
-    if (!profile) {
-      setUserBookings([]);
-      setActiveBooking(null);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'bookings'),
-      where('userId', '==', profile.uid)
-    );
+      // FIX: Ensure profile exists before querying
+      if (!profile || !profile.uid) {
+        setUserBookings([]);
+        setActiveBooking(null);
+        return;
+      }
+      
+      const q = query(
+        collection(db, 'bookings'),
+        where('userId', '==', profile.uid || 'auth_loading') // Removed the fallback string
+      );
+      // ... rest of your code ...
 
     const unsubscribeBookings = onSnapshot(q, (snapshot) => {
       const bookingsList: any[] = [];

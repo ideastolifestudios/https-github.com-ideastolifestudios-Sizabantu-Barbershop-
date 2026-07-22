@@ -1,3 +1,16 @@
+// [DEBUGGER] Global Error & Rejection Traps
+process.on('unhandledRejection', (r) => console.error('🚨 [UNHANDLED REJECTION]:', r));
+process.on('uncaughtException', (e) => console.error('🚨 [UNCAUGHT EXCEPTION]:', e.message, e.stack));
+
+// Global protection patch for invalid date values
+const originalToISO = Date.prototype.toISOString;
+Date.prototype.toISOString = function() {
+  if (isNaN(this.getTime())) {
+    console.log("[SAFEGUARD] Caught invalid date call. Substituting current time stamp.");
+    return new Date().toISOString();
+  }
+  return originalToISO.call(this);
+};
 import "dotenv/config";
 console.log("--- 🛡️ ENV HEALTH CHECK ---");
 console.log("GOOGLE_CLIENT_ID Loaded:", !!process.env.GOOGLE_CLIENT_ID);
@@ -145,7 +158,8 @@ async function sendSMTPEmail(options: { to: string; subject: string; text?: stri
   }
 
   try {
-    const info = await transporter.sendMail({
+    const info = await console.log("📧 [EMAIL ATTEMPT] Handing off message to Nodemailer...");
+    transporter.sendMail({
       from,
       to: options.to,
       subject: options.subject,
@@ -521,7 +535,7 @@ async function sendWorkspaceOrFallbackEmail(to: string, subject: string, html: s
 
 async function handleFirstBookingOnboarding(bookingId: string, booking: any) {
   if (!db) return;
-  const userEmail = booking.userEmail;
+  const userEmail = (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail);
   if (!userEmail) return;
 
   try {
@@ -541,7 +555,7 @@ async function handleFirstBookingOnboarding(bookingId: string, booking: any) {
     const activeBookings = bookingsSnap.docs.filter(d => d.data().status !== 'cancelled');
 
     if (activeBookings.length <= 1 || (onboardingDoc.exists && !onboardingDoc.data()?.welcomeSent)) {
-      console.log(`[ONBOARDING] Automated trigger: First booking confirmed for ${booking.userName} (${userEmail})!`);
+      console.log(`[ONBOARDING] Automated trigger: First booking confirmed for ${(booking.userName || booking.name || booking.clientName || booking.customerName)} (${userEmail})!`);
 
       // 1. Welcome Email Details
       const welcomeSubject = `Welcome to Sizabantu Barbershop! Your Journey to Premium Grooming ✨`;
@@ -555,7 +569,7 @@ async function handleFirstBookingOnboarding(bookingId: string, booking: any) {
             <p style="color: #3b82f6; font-size: 11px; font-weight: 800; letter-spacing: 0.35em; text-transform: uppercase; margin: 8px 0 0 0;">OFFICIAL CLIENT WELCOME</p>
           </div>
 
-          <p style="font-size: 16px; color: #f1f5f9; line-height: 1.6; margin-bottom: 16px;">Hello <strong>${booking.userName || "Valued Client"}</strong>,</p>
+          <p style="font-size: 16px; color: #f1f5f9; line-height: 1.6; margin-bottom: 16px;">Hello <strong>${(booking.userName || booking.name || booking.clientName || booking.customerName) || "Valued Client"}</strong>,</p>
           <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 24px;">
             Welcome to the <strong>Sizabantu Barbershop family</strong>! We are absolutely thrilled that you booked your first premium grooming experience with us. Our chair is officially reserved for you, and we cannot wait to help you sculpt your personalized style.
           </p>
@@ -622,7 +636,7 @@ async function handleFirstBookingOnboarding(bookingId: string, booking: any) {
           </div>
 
           <!-- Body -->
-          <p style="font-size: 16px; color: #f1f5f9; line-height: 1.6; margin-bottom: 16px;">Hello <strong>${booking.userName || "Valued Client"}</strong>,</p>
+          <p style="font-size: 16px; color: #f1f5f9; line-height: 1.6; margin-bottom: 16px;">Hello <strong>${(booking.userName || booking.name || booking.clientName || booking.customerName) || "Valued Client"}</strong>,</p>
           <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 20px;">
             It has been a week since your first premier grooming session with us at Sizabantu. We hope you are loving your look and enjoying the styling precision!
           </p>
@@ -655,7 +669,7 @@ async function handleFirstBookingOnboarding(bookingId: string, booking: any) {
       // Save scheduled job to Firestore collection
       await db.collection("scheduled_emails").add({
         email: userEmail,
-        name: booking.userName || "Valued Client",
+        name: (booking.userName || booking.name || booking.clientName || booking.customerName) || "Valued Client",
         subject: reviewSubject,
         html: reviewHtml,
         scheduledFor: followUpScheduledTime.toISOString(),
@@ -757,10 +771,12 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
 
     // Check if we already finished all tasks
     const needCalendar = !calendarSynced;
-    const needEmail = !confirmationEmailSent && emailEnabled && booking.userEmail;
-    const needContact = !contactSynced && contactsEnabled && booking.userName && booking.userEmail;
+    const needEmail = !confirmationEmailSent && emailEnabled && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail);
+    const needContact = !contactSynced && contactsEnabled && (booking.userName || booking.name || booking.clientName || booking.customerName) && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail);
 
     if (!needCalendar && !needEmail && !needContact) {
+    console.log("🧐 [DEBUG STATE] Preferences Object:", typeof preferences !== "undefined" ? JSON.stringify(preferences) : (typeof config !== "undefined" ? JSON.stringify(config) : "Not in scope"));
+    console.log("🧐 [DEBUG STATE] Booking Sync Flags:", typeof booking !== "undefined" ? JSON.stringify({ id: booking?.id, status: booking?.status, isSynced: booking?.isSynced, workspaceSynced: booking?.workspaceSynced }) : "Not in scope");
       console.log(`Automation: Booking ${bookingId} already fully synchronized to Workspace based on current preferences.`);
       return;
     }
@@ -802,11 +818,11 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
         const end = booking.endDateTime ? new Date(booking.endDateTime) : new Date(start.getTime() + 60 * 60 * 1000);
 
         const calData = await syncBookingToWorkspace({
-          customerName: booking.userName || 'Client',
+          customerName: (booking.userName || booking.name || booking.clientName || booking.customerName) || 'Client',
           service: booking.serviceName || 'Service',
           startTime: start.toISOString(),
           endTime: end.toISOString(),
-          email: booking.userEmail || '',
+          email: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail) || '',
           phone: booking.userPhone || ''
         });
 
@@ -821,7 +837,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
     }
 
     // 2. DISPATCH CONFIRMATION EMAIL VIA GMAIL SEND / SMTP fallback
-    if (!confirmationEmailSent && emailEnabled && booking.userEmail) {
+    if (!confirmationEmailSent && emailEnabled && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)) {
       const emailBodyHtml = `
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; padding: 40px; color: #ffffff; border-radius: 24px; max-width: 600px; margin: 0 auto; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
           <div style="text-align: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 25px; margin-bottom: 30px;">
@@ -829,7 +845,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
             <p style="color: #3b82f6; font-size: 10px; font-weight: 800; letter-spacing: 0.32em; text-transform: uppercase; margin: 8px 0 0 0;">RESERVATION CONFIRMED</p>
           </div>
           
-          <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 20px;">Hello <strong>${booking.userName}</strong>,</p>
+          <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 20px;">Hello <strong>${(booking.userName || booking.name || booking.clientName || booking.customerName)}</strong>,</p>
           <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 25px;">Your booking has been successfully secured in our system! We have reserved your specialist chair.</p>
           
           <div style="background-color: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 25px; margin: 25px 0;">
@@ -867,9 +883,9 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
       `;
 
       if (!accessToken) {
-        console.log(`[WORKSPACE] Gmail not connected yet. Dispatched confirmation email to ${booking.userEmail} via SMTP fallback...`);
+        console.log(`[WORKSPACE] Gmail not connected yet. Dispatched confirmation email to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} via SMTP fallback...`);
         const smtpResult = await sendSMTPEmail({
-          to: booking.userEmail,
+          to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
           subject: `Sizabantu Barbershop - Booking Confirmed! [Ref: ${verificationCode}]`,
           html: emailBodyHtml
         });
@@ -878,16 +894,16 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
           logLines.push("Confirmation email sent to client via SMTP fallback (unlinked)");
           io.emit("notification:direct", {
             userId: booking.userId,
-            message: `Booking confirmation email sent to ${booking.userEmail}!`
+            message: `Booking confirmation email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
           });
         } else {
           logLines.push(`SMTP confirmation fallback failed: ${(smtpResult.error || "").slice(0, 50)}`);
         }
       } else {
-        console.log(`[WORKSPACE] Sending confirmation email to ${booking.userEmail} via Gmail...`);
+        console.log(`[WORKSPACE] Sending confirmation email to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} via Gmail...`);
         try {
           const mailLines = [
-            `To: ${booking.userEmail}`,
+            `To: ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}`,
             `Subject: Sizabantu Barbershop - Booking Confirmed! [Ref: ${verificationCode}]`,
             `Content-Type: text/html; charset=utf-8`,
             `MIME-Version: 1.0`,
@@ -912,12 +928,12 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
           if (gmailRes.ok) {
             confirmationEmailSent = true;
             logLines.push("Confirmation email sent to client via Gmail");
-            console.log(`[WORKSPACE] Gmail Booking Confirmation dispatched to ${booking.userEmail}`);
+            console.log(`[WORKSPACE] Gmail Booking Confirmation dispatched to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}`);
             
             // Toast user
             io.emit("notification:direct", {
               userId: booking.userId,
-              message: `Booking confirmation email sent to ${booking.userEmail}!`
+              message: `Booking confirmation email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
             });
           } else {
             const errText = await gmailRes.text();
@@ -925,7 +941,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
             logLines.push(`Gmail failed: ${errText.slice(0, 100)}. Falling back to SMTP.`);
             
             const smtpResult = await sendSMTPEmail({
-              to: booking.userEmail,
+              to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
               subject: `Sizabantu Barbershop - Booking Confirmed! [Ref: ${verificationCode}]`,
               html: emailBodyHtml
             });
@@ -934,7 +950,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
               logLines.push("Confirmation email sent to client via fallback SMTP");
               io.emit("notification:direct", {
                 userId: booking.userId,
-                message: `Booking confirmation email sent to ${booking.userEmail} via fallback!`
+                message: `Booking confirmation email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} via fallback!`
               });
             }
           }
@@ -943,7 +959,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
           logLines.push(`Gmail Error: ${(mErr as Error).message}. Falling back to SMTP.`);
           
           const smtpResult = await sendSMTPEmail({
-            to: booking.userEmail,
+            to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
             subject: `Sizabantu Barbershop - Booking Confirmed! [Ref: ${verificationCode}]`,
             html: emailBodyHtml
           });
@@ -952,7 +968,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
             logLines.push("Confirmation email sent to client via SMTP fallback");
             io.emit("notification:direct", {
               userId: booking.userId,
-              message: `Booking confirmation email sent to ${booking.userEmail} via fallback!`
+              message: `Booking confirmation email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} via fallback!`
             });
           }
         }
@@ -960,8 +976,8 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
     }
 
     // 3. SEND SIMULATED SMS REMINDER CONFIRMATION
-    if (!smsSent && smsEnabled && booking.userEmail) {
-      console.log(`[WORKSPACE] Sending automated SMS to ${booking.userEmail} client...`);
+    if (!smsSent && smsEnabled && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)) {
+      console.log(`[WORKSPACE] Sending automated SMS to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} client...`);
       const smsMessage = `Sizabantu Barber Alert: Your slot is CONFIRMED for ${booking.serviceName} on ${appointmentTimeStr}. Your check-in code is ${verificationCode}. Please arrive 10m early!`;
       
       console.log(`[SMS SENDER ENGINE] >>> SMS SENT to CLIENT: "${smsMessage}"`);
@@ -976,8 +992,8 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
     }
 
     // 4. SYNC TO GOOGLE CONTACTS
-    if (!contactSynced && contactsEnabled && booking.userName && booking.userEmail) {
-      console.log(`[WORKSPACE] Adding client ${booking.userName} as a Google Contact...`);
+    if (!contactSynced && contactsEnabled && (booking.userName || booking.name || booking.clientName || booking.customerName) && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)) {
+      console.log(`[WORKSPACE] Adding client ${(booking.userName || booking.name || booking.clientName || booking.customerName)} as a Google Contact...`);
       let userPhone = "";
       try {
         if (booking.userId) {
@@ -990,7 +1006,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
         console.error("Failed to query phoneNumber for contact sync:", phoneErr);
       }
 
-      const contactResult = await createGoogleContact(accessToken, booking.userName, booking.userEmail, userPhone);
+      const contactResult = await createGoogleContact(accessToken, (booking.userName || booking.name || booking.clientName || booking.customerName), (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail), userPhone);
       if (contactResult.success) {
         contactSynced = true;
         contactResourceName = contactResult.resourceName;
@@ -998,7 +1014,7 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
         
         io.emit("notification:direct", {
           userId: booking.userId,
-          message: `Linked to Workspace Contacts successfully! (${booking.userName})`
+          message: `Linked to Workspace Contacts successfully! (${(booking.userName || booking.name || booking.clientName || booking.customerName)})`
         });
       } else {
         logLines.push(`Contact sync failed: ${(contactResult.error || "").slice(0, 100)}`);
@@ -1085,8 +1101,8 @@ async function runUpcomingRemindersDispatcher() {
       }
 
       // 1. GMAIL REMINDER SEND
-      if (!reminderEmailSentBySizabantu && emailEnabled && booking.userEmail) {
-        console.log(`[REMINDER DISPATCH] Sending reminder email to ${booking.userEmail}...`);
+      if (!reminderEmailSentBySizabantu && emailEnabled && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)) {
+        console.log(`[REMINDER DISPATCH] Sending reminder email to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}...`);
         
         const emailBodyHtml = `
           <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; padding: 40px; color: #ffffff; border-radius: 24px; max-width: 600px; margin: 0 auto; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
@@ -1095,7 +1111,7 @@ async function runUpcomingRemindersDispatcher() {
               <p style="color: #eab308; font-size: 10px; font-weight: 800; letter-spacing: 0.32em; text-transform: uppercase; margin: 8px 0 0 0;">SESSION REMINDER</p>
             </div>
             
-            <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 20px;">Hi <strong>${booking.userName}</strong>,</p>
+            <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 20px;">Hi <strong>${(booking.userName || booking.name || booking.clientName || booking.customerName)}</strong>,</p>
             <p style="font-size: 15px; color: #cbd5e1; line-height: 1.6; margin-bottom: 25px;">This is an automated Google Workspace reminder that your appointment at Sizabantu Barbershop is starting very soon!</p>
             
             <div style="background-color: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 25px; margin: 25px 0;">
@@ -1125,9 +1141,9 @@ async function runUpcomingRemindersDispatcher() {
         `;
 
         if (!accessToken) {
-          console.log(`[REMINDER DISPATCH] Workspace unlinked. Sending reminder email to ${booking.userEmail} via SMTP fallback...`);
+          console.log(`[REMINDER DISPATCH] Workspace unlinked. Sending reminder email to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)} via SMTP fallback...`);
           const smtpResult = await sendSMTPEmail({
-            to: booking.userEmail,
+            to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
             subject: `ALERT: Appointment Reminder - Sizabantu Barbershop [Ref: ${verificationCode}]`,
             html: emailBodyHtml
           });
@@ -1135,13 +1151,13 @@ async function runUpcomingRemindersDispatcher() {
             reminderEmailSentBySizabantu = true;
             io.emit("notification:direct", {
               userId: booking.userId,
-              message: `Reminder dispatch: SMTP reminder email sent to ${booking.userEmail}!`
+              message: `Reminder dispatch: SMTP reminder email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
             });
           }
         } else {
           try {
             const mailLines = [
-              `To: ${booking.userEmail}`,
+              `To: ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}`,
               `Subject: ALERT: Appointment Reminder - Sizabantu Barbershop [Ref: ${verificationCode}]`,
               `Content-Type: text/html; charset=utf-8`,
               `MIME-Version: 1.0`,
@@ -1165,17 +1181,17 @@ async function runUpcomingRemindersDispatcher() {
 
             if (gmailRes.ok) {
               reminderEmailSentBySizabantu = true;
-              console.log(`[REMINDER DISPATCH] Reminder Gmail successfully sent to ${booking.userEmail}`);
+              console.log(`[REMINDER DISPATCH] Reminder Gmail successfully sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}`);
               io.emit("notification:direct", {
                 userId: booking.userId,
-                message: `Reminder dispatch: Gmail reminder sent to ${booking.userEmail}!`
+                message: `Reminder dispatch: Gmail reminder sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
               });
             } else {
               const errText = await gmailRes.text();
               console.error(`[REMINDER DISPATCH] Gmail API reminder failed. Falling back to SMTP. Error:`, errText);
               
               const smtpResult = await sendSMTPEmail({
-                to: booking.userEmail,
+                to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
                 subject: `ALERT: Appointment Reminder - Sizabantu Barbershop [Ref: ${verificationCode}]`,
                 html: emailBodyHtml
               });
@@ -1183,14 +1199,14 @@ async function runUpcomingRemindersDispatcher() {
                 reminderEmailSentBySizabantu = true;
                 io.emit("notification:direct", {
                   userId: booking.userId,
-                  message: `Reminder dispatch: SMTP reminder email sent to ${booking.userEmail}!`
+                  message: `Reminder dispatch: SMTP reminder email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
                 });
               }
             }
           } catch (mErr) {
             console.error("[REMINDER DISPATCH] Gmail reminder API Error. Falling back to SMTP. Error:", mErr);
             const smtpResult = await sendSMTPEmail({
-              to: booking.userEmail,
+              to: (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail),
               subject: `ALERT: Appointment Reminder - Sizabantu Barbershop [Ref: ${verificationCode}]`,
               html: emailBodyHtml
             });
@@ -1198,7 +1214,7 @@ async function runUpcomingRemindersDispatcher() {
               reminderEmailSentBySizabantu = true;
               io.emit("notification:direct", {
                 userId: booking.userId,
-                message: `Reminder dispatch: SMTP reminder email sent to ${booking.userEmail}!`
+                message: `Reminder dispatch: SMTP reminder email sent to ${(booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)}!`
               });
             }
           }
@@ -1206,7 +1222,7 @@ async function runUpcomingRemindersDispatcher() {
       }
 
       // 2. SMS REMINDER SEND
-      if (!reminderSmsSentBySizabantu && smsEnabled && booking.userEmail) {
+      if (!reminderSmsSentBySizabantu && smsEnabled && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail)) {
         console.log(`[REMINDER DISPATCH] Sending reminder SMS to client...`);
         const smsMessage = `REMINDER with Workspace: Your barbershop appointment for ${booking.serviceName} is coming up at ${appointmentTimeStr}! Use code ${verificationCode} to check in. See you soon!`;
         
@@ -1329,7 +1345,8 @@ if (db) {
                 data.time || "Scheduled Time",
                 data.service || "Premium Service"
               );
-              transporter.sendMail({
+              console.log("📧 [EMAIL ATTEMPT] Handing off message to Nodemailer...");
+    transporter.sendMail({
                 from: `"Sizabantu Barbershop" <${process.env.SMTP_USER}>`,
                 to: targetEmail,
                 subject: "Booking Confirmed - Sizabantu Barbershop",

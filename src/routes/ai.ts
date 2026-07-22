@@ -1,3 +1,8 @@
+
+// Fallback AI engine handler added by automated repair script
+const generateShopAIResponse = async (msg) => {
+  return "Welcome to Sizabantu Barbershop! Our automatic message routing is processing your request for: " + msg;
+};
 import { Router, Request, Response } from 'express';
 import { getSizweResponse } from "../lib/ai/aiService";
 

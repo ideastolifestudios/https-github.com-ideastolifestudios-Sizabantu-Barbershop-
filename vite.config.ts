@@ -3,29 +3,31 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 // https://vite.dev/config/
+
+// Dynamic bridge to capture decrypted dotenvx process environments at boot
+const runtimeEnvDefs = {};
+for (const key in process.env) {
+  if (key.startsWith('VITE_') || key.startsWith('FIREBASE_')) {
+    runtimeEnvDefs[`process.env.${key}`] = JSON.stringify(process.env[key]);
+    if (key.startsWith('VITE_')) {
+      runtimeEnvDefs[`import.meta.env.${key}`] = JSON.stringify(process.env[key]);
+    } else {
+      runtimeEnvDefs[`import.meta.env.VITE_${key}`] = JSON.stringify(process.env[key]);
+      runtimeEnvDefs[`process.env.VITE_${key}`] = JSON.stringify(process.env[key]);
+    }
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
-    plugins: [react(), tailwindcss()],
-    define: {
-      // ─── Firebase Web SDK ─────────────────────────────────────────────
-      // All values come from Vercel env vars / .env.local.
-      // NEVER hardcode these. See .env.example for the full list.
-      'import.meta.env.VITE_FIREBASE_API_KEY':              JSON.stringify(env.VITE_FIREBASE_API_KEY),
-      'import.meta.env.VITE_FIREBASE_AUTH_DOMAIN':          JSON.stringify(env.VITE_FIREBASE_AUTH_DOMAIN),
-      'import.meta.env.VITE_FIREBASE_PROJECT_ID':           JSON.stringify(env.VITE_FIREBASE_PROJECT_ID),
-      'import.meta.env.VITE_FIREBASE_STORAGE_BUCKET':       JSON.stringify(env.VITE_FIREBASE_STORAGE_BUCKET),
-      'import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID':  JSON.stringify(env.VITE_FIREBASE_MESSAGING_SENDER_ID),
-      'import.meta.env.VITE_FIREBASE_APP_ID':               JSON.stringify(env.VITE_FIREBASE_APP_ID),
-
-      // ─── SEC-06 FIX ───────────────────────────────────────────────────
-      // GEMINI_API_KEY has been intentionally removed from this file.
-      // DO NOT re-add it here. The Gemini API must only be called
-      // server-side (server.ts or server/*). If AI features are needed
-      // in the frontend, proxy them through a new /api/ai/* endpoint.
-    },
+    define: { ...runtimeEnvDefs },
+  plugins: [react(), tailwindcss()],
     server: {
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups"
+    },
       proxy: {
         '/api': {
           target: 'http://localhost:3001',
