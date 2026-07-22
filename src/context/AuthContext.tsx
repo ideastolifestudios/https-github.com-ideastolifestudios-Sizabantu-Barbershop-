@@ -12,12 +12,14 @@ import { onIdTokenChanged, User } from "firebase/auth";
 import { doc, onSnapshot, DocumentSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase-config";
 
+export type UserRole = "customer" | "barber" | "admin";
+
 // Strongly-typed Firestore user profile
 interface UserProfile {
   name?: string;
   email?: string;
   phoneNumber?: string;
-  role?: "customer" | "barber" | "admin";
+  role?: UserRole;
   createdAt?: any;
   lastLogin?: any;
   status?: string;
@@ -26,7 +28,7 @@ interface UserProfile {
 // Define what our Auth State looks like
 interface AuthState {
   user: User | null;
-  role: "customer" | "barber" | "admin" | null;
+  role: UserRole | null;
   // `loading` is true while either auth or role is being resolved
   loading: boolean;
 }
