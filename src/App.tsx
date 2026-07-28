@@ -77,13 +77,19 @@ import {
   deleteDoc,
   Timestamp
 } from 'firebase/firestore';
-import { io } from 'socket.io-client';
+import { getSocket } from "./utils/socket";
 
 import { auth, db } from './firebase-config';
 import BookingPage from './pages/BookingPage';
 
 const googleProvider = new GoogleAuthProvider();
-const socket = io();
+const socket = getSocket() ?? {
+  on: () => {},
+  off: () => {},
+  emit: () => {},
+  disconnect: () => {},
+  close: () => {},
+} as any;
 
 // Validate Connection to Firestore (As per instructions)
 async function testConnection() {
