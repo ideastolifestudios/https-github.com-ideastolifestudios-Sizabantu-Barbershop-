@@ -1,0 +1,377 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 2d39941..4c7ba98 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,6 +1,7 @@
+ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+ import ChatWidget from "./components/ChatWidget";
+ import AuthModal from "./components/AuthModal";
++import GalleryCarousel from './components/GalleryCarousel';
+ 
+ // Import your component (adjust the relative path as needed)
+ import { CustomerSupportChat } from "./components/CustomerSupportChat";
+@@ -463,102 +464,86 @@ export const triggerToast = (message: string, type: 'reward' | 'queue' | 'direct
+ const NotificationCenter = () => {
+   const [notifications, setNotifications] = useState<any[]>([]);
+   const { profile } = useAuth();
++  const timeoutsRef = useRef<Record<number, number>>({});
++
++  const getIcon = (type: string | undefined) => {
++    switch (type) {
++      case 'reward': return <Trophy className="w-5 h-5 text-yellow-500" />;
++      case 'queue': return <Users className="w-5 h-5 text-blue-500" />;
++      case 'admin': return <ShieldCheck className="w-5 h-5 text-brand-blue" />;
++      case 'direct': return <Bell className="w-5 h-5 text-brand-red animate-bounce" />;
++      default: return <Bell className="w-5 h-5 text-slate-500" />;
++    }
++  };
++
++  const dismiss = (id: number) => {
++    if (timeoutsRef.current[id]) {
++      clearTimeout(timeoutsRef.current[id]);
++      delete timeoutsRef.current[id];
++    }
++    setNotifications((prev) => prev.filter((n) => n.id !== id));
++  };
++
++  const schedule = (notif: any, ms = 5000) => {
++    setNotifications((prev) => [notif, ...prev]);
++    timeoutsRef.current[notif.id] = window.setTimeout(() => dismiss(notif.id), ms);
++  };
+ 
+   useEffect(() => {
+     const handleCustomToast = (e: Event) => {
+       const { message, type } = (e as CustomEvent).detail;
+-      const getIcon = () => {
+-        switch (type) {
+-          case 'reward': return <Trophy className="w-5 h-5 text-yellow-500" />;
+-          case 'queue': return <Users className="w-5 h-5 text-blue-500" />;
+-          case 'admin': return <ShieldCheck className="w-5 h-5 text-brand-blue" />;
+-          case 'direct': return <Bell className="w-5 h-5 text-brand-red animate-bounce" />;
+-          default: return <Bell className="w-5 h-5 text-slate-500" />;
+-        }
+-      };
+-      
+-      const newNotif = {
+-        id: Date.now(),
+-        type,
+-        message,
+-        icon: getIcon()
+-      };
+-      setNotifications(prev => [newNotif, ...prev]);
+-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 6000);
++      schedule({ id: Date.now(), type, message });
+     };
+ 
+     window.addEventListener('app-toast', handleCustomToast);
+ 
+-    socket.on('notification:reward', (data) => {
+-      const newNotif = { 
+-        id: Date.now(), 
+-        type: 'reward', 
+-        message: `Congrats! You have ${data.stamps} stamps now.`,
+-        icon: <Trophy className="w-5 h-5 text-yellow-500" />
+-      };
+-      setNotifications(prev => [newNotif, ...prev]);
+-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 5000);
+-    });
+-
+-    socket.on('queue:updated', (data) => {
+-      const newNotif = { 
+-        id: Date.now(), 
+-        type: 'queue', 
+-        message: `Queue updated: Slot ${data.bookingId} is now ${data.status}.`,
+-        icon: <Users className="w-5 h-5 text-blue-500" />
+-      };
+-      setNotifications(prev => [newNotif, ...prev]);
+-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 5000);
+-    });
+-
+-    socket.on('notification:direct', (data) => {
+-      // Only show if it's for this user
++    const rewardHandler = (data: any) => {
++      schedule({ id: Date.now(), type: 'reward', message: `Congrats! You have ${data.stamps} stamps now.` });
++    };
++    const queueHandler = (data: any) => {
++      schedule({ id: Date.now(), type: 'queue', message: `Queue updated: Slot ${data.bookingId} is now ${data.status}.` });
++    };
++    const directHandler = (data: any) => {
+       if (profile && data.userId === profile.uid) {
+-        const newNotif = { 
+-          id: Date.now(), 
+-          type: 'direct', 
+-          message: data.message,
+-          icon: <Bell className="w-5 h-5 text-brand-red animate-bounce" />
+-        };
+-        setNotifications(prev => [newNotif, ...prev]);
+-        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 8000);
++        schedule({ id: Date.now(), type: 'direct', message: data.message });
+       }
+-    });
+-
+-    socket.on('notification:admin', (data) => {
++    };
++    const adminHandler = (data: any) => {
+       if (profile?.role === 'admin') {
+-        const newNotif = { 
+-          id: Date.now(), 
+-          type: 'admin', 
+-          message: `${data.title}: ${data.message}`,
+-          icon: <ShieldCheck className="w-5 h-5 text-brand-blue" />
+-        };
+-        setNotifications(prev => [newNotif, ...prev]);
+-        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotif.id)), 8000);
++        schedule({ id: Date.now(), type: 'admin', message: `${data.title}: ${data.message}` });
+       }
+-    });
++    };
++
++    socket?.on?.('notification:reward', rewardHandler);
++    socket?.on?.('queue:updated', queueHandler);
++    socket?.on?.('notification:direct', directHandler);
++    socket?.on?.('notification:admin', adminHandler);
+ 
+     return () => {
+-      socket.off('notification:reward');
+-      socket.off('queue:updated');
+-      socket.off('notification:direct');
+       window.removeEventListener('app-toast', handleCustomToast);
++      Object.values(timeoutsRef.current).forEach((t) => clearTimeout(t));
++      timeoutsRef.current = {};
++      socket?.off?.('notification:reward', rewardHandler);
++      socket?.off?.('queue:updated', queueHandler);
++      socket?.off?.('notification:direct', directHandler);
++      socket?.off?.('notification:admin', adminHandler);
+     };
+   }, [profile]);
+ 
+   return (
+     <div className="fixed top-24 right-6 z-[1000] flex flex-col gap-3 pointer-events-none">
+       <AnimatePresence>
+-        {notifications.map(notif => (
++        {notifications.map((notif) => (
+           <motion.div
+             key={notif.id}
+             initial={{ opacity: 0, x: 50, scale: 0.9 }}
+             animate={{ opacity: 1, x: 0, scale: 1 }}
+             exit={{ opacity: 0, scale: 0.5 }}
+-            className="bg-white/90 backdrop-blur-xl border border-slate-100 shadow-2xl p-4 rounded-2xl flex items-center gap-4 min-w-[300px] pointer-events-auto"
++            className="pointer-events-auto bg-white/95 backdrop-blur-xl border border-slate-100 shadow-2xl p-4 rounded-2xl flex items-center gap-4 min-w-[300px] cursor-pointer"
++            onClick={() => dismiss(notif.id)}
+           >
+             <div className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center">
+-              {notif.icon}
++              {getIcon(notif.type)}
+             </div>
+             <div>
+               <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Automated System</p>
+@@ -571,55 +556,6 @@ const NotificationCenter = () => {
+   );
+ };
+ 
+-// --- Automation System Components ---
+-
+-interface ErrorBoundaryProps {
+-  children?: ReactNode;
+-  fallback?: ReactNode;
+-  name?: string;
+-}
+-
+-interface ErrorBoundaryState {
+-  hasError: boolean;
+-}
+-
+-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+-  constructor(props: ErrorBoundaryProps) {
+-    super(props);
+-    this.state = { hasError: false };
+-  }
+-
+-  public static getDerivedStateFromError(_: Error): ErrorBoundaryState {
+-    return { hasError: true };
+-  }
+-
+-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+-    console.error(`Uncaught error in ${this.props.name || 'Component'}:`, error, errorInfo);
+-  }
+-
+-  public render() {
+-    if (this.state.hasError) {
+-      return this.props.fallback || (
+-        <div className="p-12 text-center bg-slate-50/50 backdrop-blur-md rounded-[3rem] border-2 border-dashed border-slate-200/20">
+-          <div className="w-16 h-16 bg-brand-red/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+-            <AlertCircle className="w-8 h-8 text-brand-red" />
+-          </div>
+-          <h2 className="text-2xl font-black uppercase tracking-tight text-white mb-4">Something went wrong</h2>
+-          <p className="text-white/40 mb-8 max-w-md mx-auto text-sm font-serif italic">We encountered an error loading this module. Our team has been notified. Please try refreshing.</p>
+-          <button 
+-            onClick={() => window.location.reload()}
+-            className="bg-brand-red text-white px-8 py-3 rounded-full font-black uppercase tracking-widest text-[9px] shadow-xl shadow-red-500/20"
+-          >
+-            Refresh Interface
+-          </button>
+-        </div>
+-      );
+-    }
+-
+-    return this.props.children;
+-  }
+-}
+-
+ const AdminDashboard = () => {
+   const [activeTab, setActiveTab] = useState<'queue' | 'scheduled' | 'checkin'>('queue');
+   const [bookings, setBookings] = useState<any[]>([]);
+@@ -3531,46 +3467,6 @@ const TopNav = () => {
+   );
+ };
+ 
+-const BackToTop = () => {
+-  const [isVisible, setIsVisible] = useState(false);
+-
+-  useEffect(() => {
+-    const toggleVisibility = () => {
+-      if (window.pageYOffset > 500) {
+-        setIsVisible(true);
+-      } else {
+-        setIsVisible(false);
+-      }
+-    };
+-    window.addEventListener('scroll', toggleVisibility);
+-    return () => window.removeEventListener('scroll', toggleVisibility);
+-  }, []);
+-
+-  return (
+-    <AnimatePresence>
+-      {isVisible && (
+-        <motion.button
+-          initial={{ opacity: 0, scale: 0.5, y: 20 }}
+-          animate={{ opacity: 1, scale: 1, y: 0 }}
+-          exit={{ opacity: 0, scale: 0.5, y: 20 }}
+-          whileHover={{ y: -5 }}
+-          whileTap={{ scale: 0.9 }}
+-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+-          className="fixed bottom-8 right-8 z-[100] w-16 h-16 bg-slate-900 text-white rounded-2xl flex flex-col items-center justify-center shadow-2xl shadow-slate-300 hover:bg-brand-red transition-all group overflow-hidden"
+-        >
+-          <img 
+-            src="https://res.cloudinary.com/dggitwduo/image/upload/v1775635697/SB_BARBER_LOGO_ASSET_ag52o1.png" 
+-            alt="Barber" 
+-            className="w-7 h-7 object-contain brightness-0 invert group-hover:rotate-12 transition-transform duration-500"
+-            referrerPolicy="no-referrer"
+-          />
+-          <span className="text-[8px] font-black uppercase tracking-[0.2em] mt-1 opacity-60 group-hover:opacity-100 transition-opacity">Top</span>
+-        </motion.button>
+-      )}
+-    </AnimatePresence>
+-  );
+-};
+-
+ const LiveStatus = ({ centered = false }: { centered?: boolean }) => {
+   const [time, setTime] = useState(new Date());
+ 
+@@ -3580,17 +3476,14 @@ const LiveStatus = ({ centered = false }: { centered?: boolean }) => {
+   }, []);
+ 
+   const isOpen = () => {
+-    const day = time.getDay(); // 0 = Sunday, 1 = Monday, ...
++    // Shop open MON - SUN, 09:00 - 18:00
+     const hour = time.getHours();
+-    
+-    if (day === 1) return false; // Monday Closed
+-    return hour >= 9 && hour < 18; // 09:00 - 18:00
++    return hour >= 9 && hour < 18;
+   };
+ 
+   if (centered) {
+     return (
+       <div className="flex flex-col items-center justify-center mt-16 text-center">
+-        <div className="flex items-center gap-2 mb-2 bg-slate-950/45 px-3 py-1 rounded-full border border-white/5 backdrop-blur-sm">
+           <span className={`relative flex h-2 w-2 ${isOpen() ? 'text-emerald-500' : 'text-brand-red'}`}>
+             <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOpen() ? 'bg-emerald-400' : 'bg-brand-red/40'}`}></span>
+             <span className={`relative inline-flex rounded-full h-2 w-2 ${isOpen() ? 'bg-emerald-500' : 'bg-brand-red'}`}></span>
+@@ -3606,14 +3499,15 @@ const LiveStatus = ({ centered = false }: { centered?: boolean }) => {
+           {time.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
+         </p>
+         
++
+         {/* Operating Hours info nicely aligned */}
+         <div className="mt-4 flex flex-col sm:flex-row items-center gap-1 sm:gap-3 text-[9px] text-white/30 tracking-[0.2em] uppercase font-bold bg-slate-950/10 px-4 py-2 rounded-lg border border-white/5">
+-          <span>TUE - SUN: 09:00 - 18:00</span>
++          <span>MON - SUN: 09:00 - 18:00</span>
+           <span className="hidden sm:inline text-white/10">•</span>
+-          <span className="text-brand-red/80">MON: CLOSED</span>
++          <span className="text-brand-red/80">Open Daily</span>
+         </div>
+-      </div>
+-    );
++        </div>
++  );
+   }
+ 
+   return (
+@@ -4236,51 +4130,13 @@ const Portfolio = () => {
+               <div className="max-w-7xl mx-auto p-2 md:p-6">
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+                   {galleryImages.map((src, idx) => (
+-                    <motion.div 
+-                      key={idx}
+-                      initial={{ opacity: 0 }}
+-                      animate={{ opacity: 1 }}
+-                      transition={{ delay: idx * 0.02 }}
+-                      className="relative aspect-square overflow-hidden group cursor-pointer bg-slate-50"
+-                      onClick={() => setSelectedGalleryImg(src)}
+-                    >
+-                      <LazyImage 
+-                        src={src} 
+-                        alt={`Gallery ${idx}`}
+-                        className="transition-transform duration-700 group-hover:scale-105"
+-                      />
+-                      <div className="absolute inset-0 bg-brand-red/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+-                        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform">
+-                          <CheckCircle2 className="w-5 h-5 text-brand-red" />
+-                        </div>
+-                      </div>
+-                    </motion.div>
+-                  ))}
+-                </div>
+-              </div>
+-            </motion.div>
+-          )}
+-        </AnimatePresence>
+-
+-        {/* Individual Image Lightbox */}
+-        <AnimatePresence>
+-          {selectedGalleryImg && (
+-            <motion.div 
+-              initial={{ opacity: 0 }}
+-              animate={{ opacity: 1 }}
+-              exit={{ opacity: 0 }}
+-              className="fixed inset-0 z-[1100] bg-slate-900/98 flex items-center justify-center p-6"
+-              onClick={() => setSelectedGalleryImg(null)}
+-            >
+-              <button 
+-                className="absolute top-8 right-8 p-4 bg-white/10 hover:bg-brand-red rounded-2xl text-white transition-all backdrop-blur-md z-[1200]"
+-                onClick={(e) => { e.stopPropagation(); setSelectedGalleryImg(null); }}
+-              >
+-                <X className="w-8 h-8" />
+-              </button>
+-              
+-              <motion.div
+-                initial={{ scale: 0.9, opacity: 0 }}
++          <div className="mb-8">
++            <GalleryCarousel
++              images={galleryImages}
++              interval={4000}
++              onImageClick={(src) => setSelectedGalleryImg(src)}
++            />
++          </div>
+                 animate={{ scale: 1, opacity: 1 }}
+                 className="relative max-w-5xl w-full max-h-[80vh] flex items-center justify-center"
+               >
+@@ -5042,7 +4898,6 @@ export default function App() {
+           </>
+         )}
+       </main>
+-      <BackToTop />
+       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+           <ChatWidget />
+     </div>

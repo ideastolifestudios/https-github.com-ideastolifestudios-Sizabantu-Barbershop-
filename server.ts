@@ -171,8 +171,9 @@ async function sendSMTPEmail(options: { to: string; subject: string; text?: stri
       text: options.text,
       html: options.html,
     });
-    console.log(`[SMTP] Email successfully sent to ${options.to}! MessageID: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
+const info: any = await transporter.sendMail(mailOptions);
+console.log(`[SMTP] Email successfully sent to ${options.to}! MessageID: ${info?.messageId}`);
+return { success: true, messageId: info?.messageId };
   } catch (err) {
     console.error(`[SMTP] Failed to send email to ${options.to}:`, err);
     return { success: false, error: (err as Error).message };
@@ -780,7 +781,6 @@ async function runWorkspaceAutomationForBooking(bookingId: string, booking: any)
     const needContact = !contactSynced && contactsEnabled && (booking.userName || booking.name || booking.clientName || booking.customerName) && (booking.userEmail || booking.email || booking.clientEmail || booking.customerEmail);
 
     if (!needCalendar && !needEmail && !needContact) {
-    console.log("🧐 [DEBUG STATE] Preferences Object:", typeof preferences !== "undefined" ? JSON.stringify(preferences) : (typeof config !== "undefined" ? JSON.stringify(config) : "Not in scope"));
     console.log("🧐 [DEBUG STATE] Booking Sync Flags:", typeof booking !== "undefined" ? JSON.stringify({ id: booking?.id, status: booking?.status, isSynced: booking?.isSynced, workspaceSynced: booking?.workspaceSynced }) : "Not in scope");
       console.log(`Automation: Booking ${bookingId} already fully synchronized to Workspace based on current preferences.`);
       return;

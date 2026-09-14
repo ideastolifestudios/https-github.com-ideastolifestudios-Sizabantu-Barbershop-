@@ -11,6 +11,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { onIdTokenChanged, User } from "firebase/auth";
 import { doc, onSnapshot, DocumentSnapshot } from "firebase/firestore";
 import { auth, db } from "../firebase-config";
+export type UserRole = 'admin' | 'customer' | 'barber' | 'user' | string;
 
 // Strongly-typed Firestore user profile
 interface UserProfile {
