@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import ChatWidget from "./components/ChatWidget";
 import AuthModal from "./components/AuthModal";
-import { ReactNode, ErrorInfo } from 'react';
-import type { User as FirebaseUser } from 'firebase/auth'; // Assuming you use Firebase Auth
 
 // Import your component (adjust the relative path as needed)
 import { CustomerSupportChat } from "./components/CustomerSupportChat";
